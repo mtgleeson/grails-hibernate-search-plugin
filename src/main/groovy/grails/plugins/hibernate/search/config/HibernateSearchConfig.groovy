@@ -1,10 +1,9 @@
 package grails.plugins.hibernate.search.config
 
 import org.hibernate.Session
-import org.hibernate.search.FullTextSession
-import org.hibernate.search.MassIndexer
-import org.hibernate.search.Search
-import org.hibernate.search.cfg.PropertyDescriptor
+import org.hibernate.search.mapper.orm.Search
+import org.hibernate.search.mapper.orm.massindexing.MassIndexer
+import org.hibernate.search.mapper.orm.session.SearchSession
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -16,16 +15,16 @@ class HibernateSearchConfig {
     private final static Logger log = LoggerFactory.getLogger(HibernateSearchConfig)
 
     private MassIndexer massIndexer
-    private final FullTextSession fullTextSession
+    private final SearchSession searchSession
     boolean throwExceptionOnEmptyQuery
 
-    Map<String, Map<String, PropertyDescriptor>> indexedPropertiesByEntity
+    Map<String, List<String>> indexedPropertiesByEntity
 
-    HibernateSearchConfig(Session session, Map<String, Map<String, PropertyDescriptor>> indexedPropertiesByEntity) {
-        this.fullTextSession = Search.getFullTextSession(session)
+    HibernateSearchConfig(Session session, Map<String, List<String>> indexedPropertiesByEntity) {
+        this.searchSession = Search.session(session)
         this.indexedPropertiesByEntity = indexedPropertiesByEntity
-		
-		log.trace "build HibernateSearchConfig indexedPropertiesByEntity=${indexedPropertiesByEntity}"
+
+        log.trace "build HibernateSearchConfig indexedPropertiesByEntity=${indexedPropertiesByEntity}"
     }
 
     /**
@@ -35,7 +34,7 @@ class HibernateSearchConfig {
      */
     def rebuildIndexOnStart(Closure massIndexerDsl) {
         log.debug 'Start rebuilding indexes of all indexed entity types...'
-        massIndexer = fullTextSession.createIndexer()
+        massIndexer = searchSession.massIndexer()
         invokeClosureNode massIndexerDsl
         massIndexer.startAndWait()
     }
@@ -53,7 +52,7 @@ class HibernateSearchConfig {
         if (!rebuild) return
 
         log.debug 'Start rebuilding indexes of all indexed entity types...'
-        massIndexer = fullTextSession.createIndexer().startAndWait()
+        massIndexer = searchSession.massIndexer().startAndWait()
     }
 
     /**

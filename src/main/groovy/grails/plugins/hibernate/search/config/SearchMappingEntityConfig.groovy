@@ -15,12 +15,23 @@
 package grails.plugins.hibernate.search.config
 
 import grails.core.GrailsClass
-import org.hibernate.search.annotations.*
-import org.hibernate.search.cfg.*
+import org.hibernate.search.engine.backend.types.Norms
+import org.hibernate.search.engine.backend.types.Projectable
+import org.hibernate.search.engine.backend.types.Searchable
+import org.hibernate.search.engine.backend.types.Sortable
+import org.hibernate.search.engine.backend.types.TermVector
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.ProgrammaticMappingConfigurationContext
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingFullTextFieldOptionsStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingGenericFieldOptionsStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingIndexedEmbeddedStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingKeywordFieldOptionsStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingNonFullTextFieldOptionsStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingStandardFieldOptionsStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.TypeMappingStep
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
-import java.lang.annotation.ElementType
 import java.lang.reflect.Field
 
 @SuppressWarnings('GroovyUnusedDeclaration')
@@ -34,21 +45,21 @@ class SearchMappingEntityConfig {
 
     private Object analyzer
     private final GrailsClass domainClass
-    private final EntityMapping entityMapping
+    private final TypeMappingStep entityMapping
     private final List<String> indexedPropertyNames
 
-    SearchMappingEntityConfig(SearchMapping searchMapping, GrailsClass domainClass) {
+    SearchMappingEntityConfig(ProgrammaticMappingConfigurationContext mapping, GrailsClass domainClass) {
         this.indexedPropertyNames = []
         this.domainClass = domainClass
-        this.entityMapping = searchMapping.entity(domainClass.getClazz())
+        this.entityMapping = mapping.type(domainClass.clazz)
 
         // Only index non-abstract classes
         if (!domainClass.isAbstract()) {
             entityMapping.indexed()
-        }
 
-        // Add id property
-        entityMapping.property(IDENTITY, ElementType.FIELD).documentId().name('id')
+            // Add id property
+            entityMapping.property(IDENTITY).keywordField().documentId()
+        }
     }
 
     List<String> getIndexedPropertyNames() {
@@ -57,14 +68,6 @@ class SearchMappingEntityConfig {
 
     void setAnalyzer(Object analyzer) {
         this.analyzer = analyzer
-    }
-
-    void setClassBridge(Map classBridge) {
-        ClassBridgeMapping bridge = entityMapping.classBridge(classBridge['class'] as Class)
-
-        classBridge.params?.each {k, v ->
-            bridge = bridge.param(k.toString(), v.toString())
-        }
     }
 
     Object invokeMethod(String name, argsAsList) {
@@ -80,23 +83,24 @@ class SearchMappingEntityConfig {
 
         String propertyName = backingField.getName()
         String fieldName = args.name ?: name
+        Class fieldType = backingField.type
 
         log.debug 'Property {}.{} found', domainClass.clazz.canonicalName, fieldName
         indexedPropertyNames.add(name)
 
-        PropertyMapping propertyMapping = entityMapping.property(propertyName, ElementType.FIELD)
+        PropertyMappingStep propertyMappingStep = entityMapping.property(propertyName)
 
         if (args.indexEmbedded) {
 
             log.debug '> Adding indexEmbedded property'
 
-            IndexEmbeddedMapping indexEmbeddedMapping = propertyMapping.indexEmbedded()
+            PropertyMappingIndexedEmbeddedStep indexEmbeddedMapping = propertyMappingStep.indexedEmbedded()
 
             if (args.indexEmbedded instanceof Map) {
 
                 Integer depth = args.indexEmbedded.depth as Integer
                 if (depth) {
-                    indexEmbeddedMapping.depth(depth)
+                    indexEmbeddedMapping.includeDepth(depth)
                 }
 
                 Boolean includeEmbeddedObjectId = args.indexEmbedded.includeEmbeddedObjectId?.toBoolean()
@@ -104,14 +108,11 @@ class SearchMappingEntityConfig {
                     indexEmbeddedMapping.includeEmbeddedObjectId(includeEmbeddedObjectId)
                 }
             }
-        }
-        else if (args.containedIn) {
-            log.debug '> Adding containedIn property'
-            propertyMapping.containedIn()
-        }
-        else {
+        } else if (args.containedIn) {
+            log.warn '> Ignoring containedIn property as now removed in Hibernate Search 6'
+        } else {
             log.debug '> Adding indexed property'
-            configureFieldMapping(propertyMapping.field(), fieldName, args)
+            configureFieldMapping(propertyMappingStep, fieldName, fieldType, args)
         }
     }
 
@@ -137,96 +138,131 @@ class SearchMappingEntityConfig {
         backingField
     }
 
-    private void configureFieldMapping(FieldMapping fieldMapping, String fieldName, Map<String, Object> args) {
+    private void configureFieldMapping(PropertyMappingStep propertyMappingStep, String fieldName, Class fieldType, Map<String, Object> args) {
 
-        fieldMapping.name(fieldName)
-
-        if (args.containsKey('analyze')) {
-            fieldMapping.analyze(args.analyze ? Analyze.YES : Analyze.NO)
-        }
-
-        if (analyzer) {
-            if (analyzer instanceof Class)
-                fieldMapping.analyzer(analyzer as Class)
-            else fieldMapping.analyzer(analyzer as String)
-        }
-
-        // Shouldnt have both analyzer and normalizer as they are the same thing,
-        // just one is not tokenised
-        if (args.analyzer) {
-            if (args.analyzer instanceof Class)
-                fieldMapping.analyzer(args.analyzer as Class)
-            else fieldMapping.analyzer(args.analyzer as String)
-        }
-
-        else if (args.normalizer) {
-            if (args.normalizer instanceof Class)
-                fieldMapping.normalizer(args.normalizer as Class)
-            else fieldMapping.normalizer(args.normalizer as String)
-        }
+        PropertyMappingStandardFieldOptionsStep fieldOptionsStep = createFieldOptionsStep(propertyMappingStep, fieldName, fieldType, args)
 
         if (args.index) {
-            fieldMapping.index(Index.valueOf((args.index as String).toUpperCase()))
+            logUpdatedPropertyWarning(fieldName, 'index', 'searchable')
+            fieldOptionsStep.searchable(Searchable.valueOf((args.index as String).toUpperCase()))
         }
+        if (args.searchable) {
+            fieldOptionsStep.searchable(Searchable.valueOf((args.searchable as String).toUpperCase()))
+        }
+
 
         if (args.store) {
-            fieldMapping.store(Store.valueOf((args.store as String).toUpperCase()))
+            logUpdatedPropertyWarning(fieldName, 'store', 'projectable')
+            fieldOptionsStep.projectable(Projectable.valueOf((args.store as String).toUpperCase()))
+        }
+        if (args.projectable) {
+            fieldOptionsStep.projectable(Projectable.valueOf((args.projectable as String).toUpperCase()))
         }
 
-        if (args.termVector) {
-            fieldMapping.termVector(TermVector.valueOf((args.termVector as String).toUpperCase()))
+        if (args.termVector && fieldOptionsStep instanceof PropertyMappingFullTextFieldOptionsStep) {
+            fieldOptionsStep.termVector(TermVector.valueOf((args.termVector as String).toUpperCase()))
         }
 
         if (args.norms) {
-            fieldMapping.norms(Norms.valueOf((args.norms as String).toUpperCase()))
+            if (fieldOptionsStep instanceof PropertyMappingFullTextFieldOptionsStep) {
+                fieldOptionsStep.norms(Norms.valueOf((args.norms as String).toUpperCase()))
+            }
+            if (fieldOptionsStep instanceof PropertyMappingKeywordFieldOptionsStep) {
+                fieldOptionsStep.norms(Norms.valueOf((args.norms as String).toUpperCase()))
+            }
         }
 
         if (args.numeric) {
-            fieldMapping.numericField().precisionStep(args.numeric as Integer)
+            logUpdatedPropertyWarning(fieldName, 'numeric', 'removed')
         }
 
         if (args.boost) {
-            fieldMapping.boost(args.boost as Float)
+            logUpdatedPropertyWarning(fieldName, 'boost', 'removed')
         }
 
         if (args.date) {
-            fieldMapping.dateBridge(Resolution.valueOf((args.date as String).toUpperCase()))
+            logUpdatedPropertyWarning(fieldName, 'date', 'removed')
         }
 
         if (args.bridge) {
-            FieldBridgeMapping fieldBridgeMapping = fieldMapping.bridge(args.bridge['class'] as Class)
-
-            args.bridge['params']?.each {k, v ->
-                fieldBridgeMapping = fieldBridgeMapping.param(k.toString(), v.toString())
-            }
+            fieldOptionsStep.valueBridge(args.bridge['class'] as Class)
+            logUpdatedPropertyWarning(fieldName, 'bridge.params', 'use ValueBinder instead')
         }
-
         if (args.sortable) {
-            log.debug('> Adding sortable field')
-            FieldMapping sortingField = fieldMapping
+            implementSortable(propertyMappingStep, fieldOptionsStep, fieldName, args.sortable)
+        }
+    }
 
-            // If args are a map then we want to create a new fieldmapping and augment it
-            // Otherwise we just create a sortable field from the original
-            if (args.sortable instanceof Map) {
-                Map sortableArgs = args.sortable as Map
+    private PropertyMappingStandardFieldOptionsStep createFieldOptionsStep(PropertyMappingStep propertyMappingStep, String fieldName, Class fieldType,
+                                                                           Map<String, Object> args) {
+        PropertyMappingStandardFieldOptionsStep fieldOptionsStep
+        log.debug('Configuring indexing for field {} of type {}', fieldName, fieldType)
 
-                sortingField = fieldMapping.field().name(sortableArgs.name ?: fieldName)
+        if (fieldType in [String, Character] || Enum.isAssignableFrom(fieldType)) {
 
-                /*
-                 * Normalizer needs to be applied to sorting field rather than an analyzer,
-                 * Warning messages will be given if its missing
-                 *
-                 * Fields used for sorting can be analyzed, but must not be tokenized, so you should rather use normalizers on those
-                 * fields.
-                 */
-                if (sortableArgs.normalizer) {
-                    if (sortableArgs.normalizer instanceof Class)
-                        sortingField.normalizer(sortableArgs.normalizer as Class)
-                    else sortingField.normalizer(sortableArgs.normalizer as String)
+
+            if (args.containsKey('analyze') && !args.analyse) {
+                fieldOptionsStep = propertyMappingStep.keywordField(fieldName)
+            } else if (args.normalizer) {
+                fieldOptionsStep = propertyMappingStep.keywordField(fieldName)
+                if (args.normalizer instanceof Class) {
+                    logUpdatedPropertyWarning(fieldName, 'normalizer', 'only accept names not classes')
+                } else {
+                    fieldOptionsStep.normalizer(args.normalizer as String)
+                }
+            } else {
+                fieldOptionsStep = propertyMappingStep.fullTextField(fieldName)
+                if (args.analyzer) {
+                    if (args.analyzer instanceof Class) {
+                        logUpdatedPropertyWarning(fieldName, 'analyzer', 'only accept names not classes')
+                    } else {
+                        fieldOptionsStep.analyzer(args.analyzer as String)
+                    }
+                }
+                if (analyzer) {
+                    if (analyzer instanceof Class) {
+                        logUpdatedPropertyWarning(fieldName, 'analyzer', 'only accept names not classes')
+                    } else {
+                        fieldOptionsStep.analyzer(analyzer as String)
+                    }
                 }
             }
+        } else {
+            fieldOptionsStep = propertyMappingStep.genericField(fieldName)
+        }
+        fieldOptionsStep
+    }
 
-            sortingField.sortableField()
+    private void implementSortable(PropertyMappingStep propertyMappingStep, PropertyMappingStandardFieldOptionsStep fieldOptionsStep, String fieldName, def args) {
+        PropertyMappingNonFullTextFieldOptionsStep sortableField
+
+        Map mapArgs = args instanceof Map ? args : [:]
+        String sortableFieldName = mapArgs.name ? mapArgs.name : "${fieldName}_sort"
+        log.debug('> Adding sortable field {}', sortableFieldName)
+        if (fieldOptionsStep instanceof PropertyMappingKeywordFieldOptionsStep) {
+            sortableField = mapArgs.name ? propertyMappingStep.keywordField(sortableFieldName) : fieldOptionsStep
+        } else if (fieldOptionsStep instanceof PropertyMappingGenericFieldOptionsStep) {
+            sortableField = mapArgs.name ? propertyMappingStep.genericField(sortableFieldName) : fieldOptionsStep
+        } else {
+            sortableField = propertyMappingStep.keywordField(sortableFieldName)
+        }
+
+        sortableField.sortable(Sortable.YES)
+
+        if (sortableField instanceof PropertyMappingKeywordFieldOptionsStep && mapArgs.normalizer) {
+            if (mapArgs.normalizer instanceof Class) {
+                logUpdatedPropertyWarning(sortableFieldName, 'normalizer', 'only accept names not classes')
+            } else {
+                sortableField.normalizer(mapArgs.normalizer as String)
+            }
+        }
+    }
+
+    private static void logUpdatedPropertyWarning(String field, String deprecatedProperty, String updatedProperty) {
+        if (updatedProperty != 'removed') {
+            log.warn('The field [{}] has been marked with search property [{}], this should be updated to [{}]', field, deprecatedProperty, updatedProperty)
+        } else {
+            log.warn('The field [{}] has been marked with search property [{}], this has been removed', field, deprecatedProperty)
         }
     }
 }

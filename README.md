@@ -114,10 +114,10 @@ class MyDomainClass {
         DISABLED, PENDING, ENABLED
     }
 
-    static hasMany = [categories: Category, items: Item]
+  static hasMany = [categories: Category, items: Item]
 
-    static luceneIndexing = {
-        // fields
+  static search = {
+    // fields
         author index: 'yes'
         body termVector: 'with_positions'
         publishedDate date: 'day'

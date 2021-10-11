@@ -3,14 +3,12 @@ package grails.plugins.hibernate.search
 import grails.plugins.Plugin
 import grails.plugins.hibernate.search.config.HibernateSearchConfig
 import grails.plugins.hibernate.search.config.SearchMappingEntityConfig
-import grails.plugins.hibernate.search.context.HibernateSearchMappingContextConfiguration
+import grails.plugins.hibernate.search.mapper.orm.mapping.HibernateSearchMappingConfigurer
+import grails.util.Environment
 import org.grails.core.artefact.DomainClassArtefactHandler
 import org.grails.datastore.mapping.reflect.ClassPropertyFetcher
-import org.grails.orm.hibernate.cfg.HibernateMappingContextConfiguration
-import org.hibernate.Session
 import org.hibernate.SessionFactory
-import org.hibernate.search.annotations.Indexed
-import org.hibernate.search.cfg.PropertyDescriptor
+import org.hibernate.search.mapper.pojo.mapping.definition.annotation.Indexed
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationContext
@@ -24,7 +22,7 @@ class HibernateSearchGrailsPlugin extends Plugin {
 
     public static HibernateSearchConfig pluginConfig
 
-    def grailsVersion = "3.2 > *"
+    def grailsVersion = "5.0 > *"
 
     // resources that are excluded from plugin packaging
     def pluginExcludes = [
@@ -42,56 +40,41 @@ class HibernateSearchGrailsPlugin extends Plugin {
     def license = 'APACHE'
     def organization = [name: 'NovaCodex', url: 'http://www.novacodex.net/']
     def developers = [
-            [name: 'Mathieu Perez', email: 'mathieu.perez@novacodex.net'],
-            [name: 'Julie Ingignoli', email: 'julie.ingignoli@novaco	dex.net'],
-            [name: 'Louis Grignon', email: 'louis.grignon@gmail.com'],
-            [name: 'Ollie Freeman', email: 'ollie.freeman@gmail.com']
+        [name: 'Mathieu Perez', email: 'mathieu.perez@novacodex.net'],
+        [name: 'Julie Ingignoli', email: 'julie.ingignoli@novaco	dex.net'],
+        [name: 'Louis Grignon', email: 'louis.grignon@gmail.com'],
+        [name: 'Ollie Freeman', email: 'ollie.freeman@gmail.com']
     ]
     def issueManagement = [system: 'github', url: 'https://github.com/mathpere/grails-hibernate-search-plugin/issues']
     def scm = [url: 'https://github.com/mathpere/grails-hibernate-search-plugin']
 
     Closure doWithSpring() {
         {->
-
-            Class projectConfigClass = grailsApplication.config.hibernate?.configClass ?: null
-
-            Class delegateConfigClass = HibernateMappingContextConfiguration
-            if (projectConfigClass != null) {
-                if (!HibernateMappingContextConfiguration.class.isAssignableFrom(projectConfigClass)) {
-                    log.warn 'Project\'s hibernate.configClass ({})) should inherit {}',
-                             projectConfigClass, HibernateMappingContextConfiguration.name
-                }
-
-                delegateConfigClass = projectConfigClass
+            if (!grailsApplication.config.hibernate.search.backend.directory.root) {
+                StringBuilder indexPathBuilder = new StringBuilder()
+                    .append(System.getProperty('user.home'))
+                    .append(File.separator)
+                    .append('.grails')
+                    .append(File.separator)
+                    .append(grailsApplication.metadata.getGrailsVersion())
+                    .append(File.separator)
+                    .append('projects')
+                    .append(File.separator)
+                    .append(grailsApplication.metadata.getApplicationName())
+                    .append(File.separator)
+                    .append('lucene-index')
+                    .append(File.separator)
+                    .append(Environment.getCurrent().name())
+                grailsApplication.config.hibernate.search.backend.directory.root = indexPathBuilder.toString()
             }
 
-            HibernateSearchMappingContextConfiguration.grailsApplication = grailsApplication
-            HibernateSearchMappingContextConfiguration.delegateConfigClass = delegateConfigClass
-
-            log.info 'Hibernate Configuration override but delegated to {}', delegateConfigClass
-
-            grailsApplication.config.hibernate.configClass = HibernateSearchMappingContextConfiguration
+            hibernateSearchMappingConfigurer(HibernateSearchMappingConfigurer)
+            grailsApplication.config.hibernate.search.mapping.configurer = ref('hibernateSearchMappingConfigurer')
         }
     }
 
     @Override
     void doWithApplicationContext() {
-
-        // config
-        def hibernateSearchConfig = grailsApplication.config.grails.plugins.hibernatesearch
-
-        if (hibernateSearchConfig && hibernateSearchConfig instanceof Closure) {
-
-            log.debug 'hibernatesearch config found'
-            Session session = applicationContext.sessionFactory.openSession()
-
-            Map<String, Map<String, PropertyDescriptor>> indexedPropertiesByEntity = getConfig()[INDEXED_ENTITIES_GRAILS_APP_CONFIG_KEY]
-
-            pluginConfig = new HibernateSearchConfig(session, indexedPropertiesByEntity)
-            hibernateSearchConfig.delegate = pluginConfig
-            hibernateSearchConfig.resolveStrategy = Closure.DELEGATE_FIRST
-            hibernateSearchConfig.call()
-        }
     }
 
     @Override
