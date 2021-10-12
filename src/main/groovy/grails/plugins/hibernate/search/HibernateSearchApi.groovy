@@ -29,7 +29,6 @@ import grails.plugins.hibernate.search.component.ShouldComponent
 import grails.plugins.hibernate.search.component.SimpleQueryStringComponent
 import grails.plugins.hibernate.search.component.WildcardComponent
 import grails.plugins.hibernate.search.config.HibernateSearchConfig
-import grails.plugins.hibernate.search.filter.SearchFilterFactory
 import groovy.util.logging.Slf4j
 import org.apache.lucene.analysis.Analyzer
 import org.hibernate.Session
@@ -73,7 +72,7 @@ class HibernateSearchApi {
 
     private Integer maxResults = 0
     private Integer offset = 0
-    private final Map<String, Map<String, Object>> filterDefinitions = [:]
+    private final List<SearchPredicate> filterPredicates = []
     private final List projection = []
 
     private Component root
@@ -161,7 +160,7 @@ class HibernateSearchApi {
 
     @Deprecated
     void criteria(Closure criteria) {
-        log.warn(
+        throw log.warn(
             'DEPRECATED: Hibernate Search 6 does not allow criteria to be added to a search (https://docs.jboss.org/hibernate/search/6' +
             '.0/migration/html_single/#searching-fulltextquery-setCriteriaQuery)')
     }
@@ -234,16 +233,25 @@ class HibernateSearchApi {
         searchSession.workspace(clazz).purge()
     }
 
+    void filter(SearchPredicate filterPredicate) {
+        filterPredicates << filterPredicate
+    }
+
     void filter(String filterName) {
-        filterDefinitions.put filterName, null
+        log.warn(
+            'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6' +
+            '.0/migration/html_single/#full-text-filter')
     }
 
     void filter(Map<String, Object> filterParams) {
-        filterDefinitions.put filterParams.name as String, filterParams.params as Map<String, Object>
+        log.warn(
+            'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6' +
+            '.0/migration/html_single/#full-text-filter')
     }
 
     void filter(String filterName, Map<String, Object> filterParams) {
-        filterDefinitions.put filterName, filterParams
+        log.warn(
+            'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#full-text-filter')
     }
 
     void below(String field, below, Map optionalParams = [:]) {
@@ -327,10 +335,10 @@ class HibernateSearchApi {
         SearchPredicateFactory predicateFactory = searchScope.predicate()
         SearchPredicate searchPredicate = primarySearchPredicate
 
-        if (filterDefinitions) {
+        if (filterPredicates) {
             BooleanPredicateClausesStep step = predicateFactory.bool().must(primarySearchPredicate)
-            filterDefinitions.each {filterName, filterParams ->
-                step.filter(SearchFilterFactory.create(predicateFactory, filterParams))
+            filterPredicates.each {filterPredicate ->
+                step.filter(filterPredicate)
             }
             searchPredicate = step.toPredicate()
         }
