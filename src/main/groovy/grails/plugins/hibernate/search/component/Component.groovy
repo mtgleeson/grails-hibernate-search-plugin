@@ -1,8 +1,12 @@
 package grails.plugins.hibernate.search.component
 
-import org.apache.lucene.search.Query
-import org.hibernate.search.query.dsl.QueryBuilder
-import org.hibernate.search.query.dsl.SimpleQueryStringMatchingContext
+import org.hibernate.search.engine.search.common.BooleanOperator
+import org.hibernate.search.engine.search.predicate.SearchPredicate
+import org.hibernate.search.engine.search.predicate.dsl.SearchPredicateFactory
+import org.hibernate.search.engine.search.predicate.dsl.SimpleQueryStringPredicateFieldMoreStep
+import org.hibernate.search.engine.search.predicate.dsl.SimpleQueryStringPredicateFieldStep
+import org.hibernate.search.engine.search.predicate.dsl.SimpleQueryStringPredicateOptionsStep
+import org.hibernate.search.mapper.orm.scope.SearchScope
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -11,12 +15,16 @@ import org.slf4j.LoggerFactory
  */
 abstract class Component {
 
-    protected QueryBuilder queryBuilder
+    protected SearchScope searchScope
 
     Component parent
     List<Component> children = []
 
-    abstract Query createQuery()
+    SearchPredicateFactory getPredicateBuilder() {
+        searchScope.predicate()
+    }
+
+    abstract SearchPredicate createSearchPredicate()
 
     def leftShift(component) {
         assert component instanceof Component: "'component' should be an instance of Component"
@@ -29,7 +37,7 @@ abstract class Component {
     }
 
     String toString(int indent) {
-        [("-" * indent) + this.class.simpleName, children.collect {it.toString(indent + 1)}].flatten().findAll {it}.join("\n")
+        [('-' * indent) + this.class.simpleName, children.collect {it.toString(indent + 1)}].flatten().findAll {it}.join('\n')
     }
 
     @Override
@@ -52,8 +60,10 @@ class SimpleQueryStringComponent extends Component {
     Boolean withAndAsDefaultOperator = false
 
     @Override
-    Query createQuery() {
-        def context = queryBuilder.simpleQueryString()
+    SearchPredicate createSearchPredicate() {
+
+        SimpleQueryStringPredicateFieldStep fieldStep = predicateBuilder.simpleQueryString()
+        SimpleQueryStringPredicateFieldMoreStep nextStep
 
         // Handle individual field boosting
         if (fieldsAndBoost) {
@@ -62,24 +72,25 @@ class SimpleQueryStringComponent extends Component {
             field = fieldsAndBoost.keySet().first()
             fieldBoost = fieldsAndBoost.remove(field)
 
-            context = context.onField(field).boostedTo(fieldBoost)
+            nextStep = fieldStep.field(field).boost(fieldBoost)
 
             fieldsAndBoost.each {f, b ->
-                context = (context as SimpleQueryStringMatchingContext).andField(f).boostedTo(b)
+                nextStep = nextStep.field(f).boost(b)
             }
-        }
-        else {
+        } else {
 
-            context = context.onField(field).boostedTo(fieldBoost ?: DEFAULT_BOOST)
+            nextStep = fieldStep.field(field).boost(fieldBoost ?: DEFAULT_BOOST)
 
             if (fields) {
-                context = context.andFields(fields.toArray() as String[]).boostedTo(fieldsBoost ?: DEFAULT_BOOST)
+                nextStep = nextStep.fields(fields.toArray() as String[]).boost(fieldsBoost ?: DEFAULT_BOOST)
             }
         }
 
-        if (withAndAsDefaultOperator) context = context.withAndAsDefaultOperator()
+        SimpleQueryStringPredicateOptionsStep optionsStep = nextStep.matching(queryString)
+
+        if (withAndAsDefaultOperator) optionsStep = optionsStep.defaultOperator(BooleanOperator.AND)
 
         log.debug('Adding SimpleQueryString for [{}]', queryString)
-        context.matching(queryString).createQuery()
+        optionsStep.toPredicate()
     }
 }

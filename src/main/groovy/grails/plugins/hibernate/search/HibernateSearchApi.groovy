@@ -15,74 +15,74 @@
 package grails.plugins.hibernate.search
 
 import grails.core.GrailsClass
-import grails.plugins.hibernate.search.component.*
+import grails.plugins.hibernate.search.component.AboveComponent
+import grails.plugins.hibernate.search.component.BelowComponent
+import grails.plugins.hibernate.search.component.BetweenComponent
+import grails.plugins.hibernate.search.component.Component
+import grails.plugins.hibernate.search.component.FuzzyComponent
+import grails.plugins.hibernate.search.component.KeywordComponent
+import grails.plugins.hibernate.search.component.Leaf
+import grails.plugins.hibernate.search.component.MustComponent
+import grails.plugins.hibernate.search.component.MustNotComponent
+import grails.plugins.hibernate.search.component.PhraseComponent
+import grails.plugins.hibernate.search.component.ShouldComponent
+import grails.plugins.hibernate.search.component.SimpleQueryStringComponent
+import grails.plugins.hibernate.search.component.WildcardComponent
 import grails.plugins.hibernate.search.config.HibernateSearchConfig
+import grails.plugins.hibernate.search.filter.SearchFilterFactory
+import groovy.util.logging.Slf4j
 import org.apache.lucene.analysis.Analyzer
-import org.apache.lucene.search.Sort
-import org.apache.lucene.search.SortField
-import org.grails.datastore.mapping.reflect.ClassPropertyFetcher
-import org.hibernate.Criteria
 import org.hibernate.Session
 import org.hibernate.Transaction
-import org.hibernate.search.FullTextQuery
-import org.hibernate.search.FullTextSession
-import org.hibernate.search.MassIndexer
-import org.hibernate.search.Search
-import org.hibernate.search.cfg.PropertyDescriptor
-import org.hibernate.search.filter.FullTextFilter
-import org.hibernate.search.query.dsl.QueryBuilder
-import org.slf4j.Logger
-import org.slf4j.LoggerFactory
+import org.hibernate.search.backend.lucene.index.LuceneIndexManager
+import org.hibernate.search.engine.search.predicate.SearchPredicate
+import org.hibernate.search.engine.search.predicate.dsl.BooleanPredicateClausesStep
+import org.hibernate.search.engine.search.predicate.dsl.SearchPredicateFactory
+import org.hibernate.search.engine.search.projection.dsl.FieldProjectionValueStep
+import org.hibernate.search.engine.search.projection.dsl.ProjectionFinalStep
+import org.hibernate.search.engine.search.projection.dsl.SearchProjectionFactory
+import org.hibernate.search.engine.search.query.SearchResult
+import org.hibernate.search.engine.search.query.dsl.SearchQueryOptionsStep
+import org.hibernate.search.engine.search.query.dsl.SearchQueryWhereStep
+import org.hibernate.search.engine.search.sort.dsl.FieldSortOptionsStep
+import org.hibernate.search.engine.search.sort.dsl.SearchSortFactory
+import org.hibernate.search.engine.search.sort.dsl.SortOrder
+import org.hibernate.search.mapper.orm.Search
+import org.hibernate.search.mapper.orm.mapping.SearchMapping
+import org.hibernate.search.mapper.orm.massindexing.MassIndexer
+import org.hibernate.search.mapper.orm.scope.SearchScope
+import org.hibernate.search.mapper.orm.session.SearchSession
 
+@Slf4j
 @SuppressWarnings('GroovyUnusedDeclaration')
 class HibernateSearchApi {
-
-    private final static Logger log = LoggerFactory.getLogger(HibernateSearchApi)
-
-    private static final Map<Object, SortField.Type> SORT_TYPES = [(Integer)   : SortField.Type.INT,
-                                                                   (Double)    : SortField.Type.DOUBLE,
-                                                                   (Float)     : SortField.Type.FLOAT,
-                                                                   (String)    : SortField.Type.STRING_VAL,
-                                                                   (Long)      : SortField.Type.LONG,
-                                                                   (BigDecimal): SortField.Type.DOUBLE,
-
-                                                                   // see Emmanuel Bernard's comment
-                                                                   // https://hibernate.onjira.com/browse/HSEARCH-97
-                                                                   (Date)      : SortField.Type.STRING,
-    ]
-
-    private static final String ASC = 'asc'
-    private static final String DESC = 'desc'
 
     private static final List MASS_INDEXER_METHODS = MassIndexer.methods.findAll {it.returnType == MassIndexer}*.name
 
     private final HibernateSearchConfig pluginConfig
 
-    private final FullTextSession fullTextSession
-	private final GrailsClass grailsDomainClass
-	private final Class clazz
+    private final SearchSession searchSession
+    private final GrailsClass grailsDomainClass
+    private final Class clazz
     private final instance
     private final staticContext
 
-    private QueryBuilder queryBuilder
+    private FieldSortOptionsStep fieldSortOptionsStep
+    private SearchScope searchScope
     private MassIndexer massIndexer
 
-    private String sort
-    private SortField.Type sortType
-    private Boolean reverse = false
     private Integer maxResults = 0
     private Integer offset = 0
     private final Map<String, Map<String, Object>> filterDefinitions = [:]
     private final List projection = []
-    private Criteria criteria
 
     private Component root
     private Component currentNode
 
     HibernateSearchApi(GrailsClass domainClass, instance, Session session, HibernateSearchConfig pluginConfig) {
-		this.grailsDomainClass = domainClass
+        this.grailsDomainClass = domainClass
         this.clazz = domainClass.clazz
-        this.fullTextSession = Search.getFullTextSession(session)
+        this.searchSession = Search.session(session)
         this.instance = instance
         this.staticContext = instance == null
         this.pluginConfig = pluginConfig
@@ -99,23 +99,23 @@ class HibernateSearchApi {
      */
     List list(@DelegatesTo(HibernateSearchApi) Closure searchDsl = null) {
 
-        initQueryBuilder()
+        initSearch()
 
         invokeClosureNode searchDsl
 
-        FullTextQuery fullTextQuery = createFullTextQuery()
+        SearchQueryOptionsStep searchQuery = createFullTextQuery()
 
+        if (fieldSortOptionsStep) {
+            searchQuery.sort(fieldSortOptionsStep.toSort())
+        }
+
+        SearchResult searchResult
         if (maxResults > 0) {
-            fullTextQuery.maxResults = maxResults
+            searchResult = offset ? searchQuery.fetch(offset, maxResults) : searchQuery.fetch(maxResults)
+        } else {
+            searchResult = searchQuery.fetchAll()
         }
-
-        fullTextQuery.firstResult = offset
-
-        if (sort) {
-            fullTextQuery.sort = new Sort(new SortField(sort, sortType, reverse))
-        }
-
-        fullTextQuery.list()
+        searchResult.hits()
     }
 
     /**
@@ -125,11 +125,12 @@ class HibernateSearchApi {
      */
     int count(@DelegatesTo(HibernateSearchApi) Closure searchDsl = null) {
 
-        initQueryBuilder()
+        initSearch()
 
         invokeClosureNode searchDsl
 
-        createFullTextQuery().resultSize
+        SearchQueryOptionsStep searchQuery = createFullTextQuery()
+        searchQuery.fetchTotalHitCount()
     }
 
     /**
@@ -139,7 +140,7 @@ class HibernateSearchApi {
      */
     void createIndexAndWait(@DelegatesTo(HibernateSearchApi) Closure massIndexerDsl = null) {
 
-        massIndexer = fullTextSession.createIndexer(clazz)
+        massIndexer = searchSession.massIndexer(clazz)
 
         invokeClosureNode massIndexerDsl
 
@@ -158,42 +159,16 @@ class HibernateSearchApi {
         this.projection.addAll(projection)
     }
 
+    @Deprecated
     void criteria(Closure criteria) {
-        this.criteria = fullTextSession.createCriteria(clazz)
-
-        criteria.delegate = this.criteria
-        criteria.resolveStrategy = Closure.DELEGATE_FIRST
-        this.criteria = criteria.call() as Criteria
-
-        log.debug 'setting criteria: {}', this.criteria
+        log.warn(
+            'DEPRECATED: Hibernate Search 6 does not allow criteria to be added to a search (https://docs.jboss.org/hibernate/search/6' +
+            '.0/migration/html_single/#searching-fulltextquery-setCriteriaQuery)')
     }
 
-    void sort(String field, String order = ASC, type = null) {
-
-        this.sort = field
-        this.reverse = order == DESC
-
-        if (type) {
-
-            switch (type.class) {
-                case Class:
-                    this.sortType = SORT_TYPES[type]
-                    break
-
-                case String:
-                    this.sortType = SortField.Type."${type.toUpperCase()}"
-                    break
-
-                case int:
-                case Integer:
-                    this.sortType = type
-                    break
-            }
-
-        }
-        else {
-            this.sortType = SORT_TYPES[ClassPropertyFetcher.forClass(clazz).getPropertyType(sort)] ?: SortField.Type.STRING
-        }
+    void sort(String field, String order = 'ASC') {
+        SearchSortFactory searchSortFactory = fieldSortOptionsStep ? fieldSortOptionsStep.then() : searchScope.sort()
+        fieldSortOptionsStep = searchSortFactory.field(field).order(SortOrder.valueOf(order.toUpperCase()))
     }
 
     /**
@@ -204,7 +179,7 @@ class HibernateSearchApi {
      */
     void withTransaction(Closure callable) {
 
-        Transaction transaction = fullTextSession.beginTransaction()
+        Transaction transaction = searchSession.toOrmSession().beginTransaction()
 
         try {
 
@@ -227,7 +202,8 @@ class HibernateSearchApi {
      * @return the scoped analyzer for this entity
      */
     Analyzer getAnalyzer() {
-        fullTextSession.searchFactory.getAnalyzer(clazz)
+        SearchMapping searchMapping = Search.mapping(searchSession.toOrmSession().sessionFactory)
+        searchMapping.indexedEntity(clazz).indexManager().unwrap(LuceneIndexManager.class).searchAnalyzer()
     }
 
     /**
@@ -237,9 +213,8 @@ class HibernateSearchApi {
      */
     void index() {
         if (!staticContext) {
-            fullTextSession.index(instance)
-        }
-        else {
+            searchSession.indexingPlan().addOrUpdate(instance)
+        } else {
             throw new MissingMethodException('index', getClass(), [] as Object[])
         }
     }
@@ -249,15 +224,14 @@ class HibernateSearchApi {
      */
     void purge() {
         if (!staticContext) {
-            fullTextSession.purge(clazz, instance.id as Serializable)
-        }
-        else {
+            searchSession.indexingPlan().purge(clazz, instance.id, null)
+        } else {
             throw new MissingMethodException('purge', getClass(), [] as Object[])
         }
     }
 
     void purgeAll() {
-        fullTextSession.purgeAll(clazz)
+        searchSession.workspace(clazz).purge()
     }
 
     void filter(String filterName) {
@@ -273,115 +247,114 @@ class HibernateSearchApi {
     }
 
     void below(String field, below, Map optionalParams = [:]) {
-        addLeaf new BelowComponent([queryBuilder: queryBuilder, field: field, below: below] + optionalParams)
+        addLeaf new BelowComponent([searchScope: searchScope, field: field, below: below] + optionalParams)
     }
 
     void above(String field, above, Map optionalParams = [:]) {
-        addLeaf new AboveComponent([queryBuilder: queryBuilder, field: field, above: above] + optionalParams)
+        addLeaf new AboveComponent([searchScope: searchScope, field: field, above: above] + optionalParams)
     }
 
     void between(String field, from, to, Map optionalParams = [:]) {
-        addLeaf new BetweenComponent([queryBuilder: queryBuilder, field: field, from: from, to: to] + optionalParams)
+        addLeaf new BetweenComponent([searchScope: searchScope, field: field, from: from, to: to] + optionalParams)
     }
 
     void keyword(String field, matching, Map optionalParams = [:]) {
-        addLeaf new KeywordComponent([queryBuilder: queryBuilder, field: field, matching: matching] + optionalParams)
+        addLeaf new KeywordComponent([searchScope: searchScope, field: field, matching: matching] + optionalParams)
     }
 
     void fuzzy(String field, matching, Map optionalParams = [:]) {
-        addLeaf new FuzzyComponent([queryBuilder: queryBuilder, field: field, matching: matching] + optionalParams)
+        addLeaf new FuzzyComponent([searchScope: searchScope, field: field, matching: matching] + optionalParams)
     }
 
     void wildcard(String field, matching, Map optionalParams = [:]) {
-        addLeaf new WildcardComponent([queryBuilder: queryBuilder, field: field, matching: matching] + optionalParams)
+        addLeaf new WildcardComponent([searchScope: searchScope, field: field, matching: matching] + optionalParams)
     }
 
     void phrase(String field, sentence, Map optionalParams = [:]) {
-        addLeaf new PhraseComponent([queryBuilder: queryBuilder, field: field, sentence: sentence] + optionalParams)
+        addLeaf new PhraseComponent([searchScope: searchScope, field: field, sentence: sentence] + optionalParams)
     }
 
     void simpleQueryString(String queryString, Map optionalParams = [:], String field, String... fields) {
-        addComponent new SimpleQueryStringComponent([queryBuilder: queryBuilder,
-                                                     field       : field, fields: fields,
-                                                     queryString : queryString] + optionalParams)
+        addComponent new SimpleQueryStringComponent([searchScope: searchScope,
+                                                     field      : field, fields: fields,
+                                                     queryString: queryString] + optionalParams)
     }
 
     void simpleQueryString(String queryString, String field, float fieldBoost, List<String> fields, float fieldsBoost, Map optionalParams = [:]) {
-        addComponent new SimpleQueryStringComponent([queryBuilder: queryBuilder,
-                                                     field       : field, fieldBoost: fieldBoost,
-                                                     fields      : fields, fieldsBoost: fieldsBoost,
-                                                     queryString : queryString] + optionalParams)
+        addComponent new SimpleQueryStringComponent([searchScope: searchScope,
+                                                     field      : field, fieldBoost: fieldBoost,
+                                                     fields     : fields, fieldsBoost: fieldsBoost,
+                                                     queryString: queryString] + optionalParams)
     }
 
     void simpleQueryString(String queryString, Map<String, Float> fieldsAndBoost, Map optionalParams = [:]) {
-        addComponent new SimpleQueryStringComponent([queryBuilder  : queryBuilder,
+        addComponent new SimpleQueryStringComponent([searchScope   : searchScope,
                                                      fieldsAndBoost: fieldsAndBoost,
                                                      queryString   : queryString] + optionalParams)
     }
 
     void must(Closure arg) {
-        addComposite new MustComponent(queryBuilder: queryBuilder), arg
+        addComposite new MustComponent(searchScope: searchScope), arg
     }
 
     void should(Closure arg) {
-        addComposite new ShouldComponent(queryBuilder: queryBuilder), arg
+        addComposite new ShouldComponent(searchScope: searchScope), arg
     }
 
     void mustNot(Closure arg) {
-        addComposite new MustNotComponent(queryBuilder: queryBuilder), arg
+        addComposite new MustNotComponent(searchScope: searchScope), arg
     }
 
     Object invokeMethod(String name, Object args) {
         if (name in MASS_INDEXER_METHODS) {
             massIndexer = massIndexer.invokeMethod(name, args) as MassIndexer
-        }
-        else {
+        } else {
             throw new MissingMethodException(name, getClass(), args)
         }
     }
 
     void invokeClosureNode(@DelegatesTo(HibernateSearchApi) Closure callable) {
-        if (!callable)
-            return
+        if (!callable) return
 
         callable.delegate = this
         callable.resolveStrategy = Closure.DELEGATE_FIRST
         callable.call()
     }
 
-    Map<String, PropertyDescriptor> getIndexedProperties() {
-		def indexedPropertiesByEntity = this.pluginConfig.getIndexedPropertiesByEntity();
-		log.debug "HibernateSearchApi.getIndexedProperties indexedProperties entities=${indexedPropertiesByEntity?.keySet()} entity=${grailsDomainClass.getName()}"
-        return indexedPropertiesByEntity[grailsDomainClass.getName()]
-    }
+    private SearchQueryOptionsStep createFullTextQuery() {
 
-    private FullTextQuery createFullTextQuery() {
-        FullTextQuery query = fullTextSession.createFullTextQuery(root.createQuery(), clazz)
+        SearchPredicate primarySearchPredicate = root.createSearchPredicate()
+        SearchPredicateFactory predicateFactory = searchScope.predicate()
+        SearchPredicate searchPredicate = primarySearchPredicate
 
-        filterDefinitions?.each {filterName, filterParams ->
-
-            FullTextFilter filter = query.enableFullTextFilter(filterName)
-
-            filterParams?.each {k, v ->
-                filter.setParameter(k, v)
+        if (filterDefinitions) {
+            BooleanPredicateClausesStep step = predicateFactory.bool().must(primarySearchPredicate)
+            filterDefinitions.each {filterName, filterParams ->
+                step.filter(SearchFilterFactory.create(predicateFactory, filterParams))
             }
+            searchPredicate = step.toPredicate()
         }
 
-        if (criteria) {
-            log.debug 'add criteria query: {}', criteria
-            query.setCriteriaQuery(criteria)
-        }
-
+        SearchQueryWhereStep whereStep = searchSession.search(clazz)
         if (projection) {
-            query.setProjection projection as String[]
+            SearchProjectionFactory projectionFactory = searchScope.projection()
+            ProjectionFinalStep projectionFinalStep
+
+            if (projection.size() == 1) {
+                projectionFinalStep = projectionFactory.field(projection.first().toString())
+            } else {
+                FieldProjectionValueStep[] fields = projection.collect {projectionFactory.field(it.toString())}.toArray() as FieldProjectionValueStep[]
+                projectionFinalStep = projectionFactory.composite(fields)
+            }
+            whereStep = whereStep.select(projectionFinalStep.toProjection())
         }
 
-        query
+        whereStep.where(searchPredicate)
     }
 
-    private initQueryBuilder() {
-        queryBuilder = fullTextSession.searchFactory.buildQueryBuilder().forEntity(clazz).get()
-        root = new MustComponent(queryBuilder: queryBuilder)
+    private initSearch() {
+        searchScope = searchSession.scope(clazz)
+        root = new MustComponent(searchScope: searchScope)
         currentNode = root
     }
 

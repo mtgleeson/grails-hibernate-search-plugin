@@ -260,9 +260,9 @@ class SearchMappingEntityConfig {
 
     private static void logUpdatedPropertyWarning(String field, String deprecatedProperty, String updatedProperty) {
         if (updatedProperty != 'removed') {
-            log.warn('The field [{}] has been marked with search property [{}], this should be updated to [{}]', field, deprecatedProperty, updatedProperty)
+            log.warn('DEPRECATED: The field [{}] has been marked with search property [{}], this should be updated to [{}]', field, deprecatedProperty, updatedProperty)
         } else {
-            log.warn('The field [{}] has been marked with search property [{}], this has been removed', field, deprecatedProperty)
+            log.warn('DEPRECATED: The field [{}] has been marked with search property [{}], this has been removed', field, deprecatedProperty)
         }
     }
 }

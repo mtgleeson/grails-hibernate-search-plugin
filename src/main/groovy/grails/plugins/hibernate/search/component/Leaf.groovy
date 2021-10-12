@@ -1,18 +1,22 @@
 package grails.plugins.hibernate.search.component
 
-import org.apache.lucene.search.Query
-import org.hibernate.search.query.dsl.*
+import org.hibernate.search.engine.search.common.ValueConvert
+import org.hibernate.search.engine.search.predicate.SearchPredicate
+import org.hibernate.search.engine.search.predicate.dsl.MatchPredicateOptionsStep
+import org.hibernate.search.engine.search.predicate.dsl.PhrasePredicateOptionsStep
+import org.hibernate.search.engine.search.predicate.dsl.PredicateFinalStep
+import org.hibernate.search.engine.search.predicate.dsl.PredicateScoreStep
+import org.hibernate.search.engine.search.predicate.dsl.RangePredicateOptionsStep
+import org.hibernate.search.engine.search.predicate.dsl.WildcardPredicateOptionsStep
 
-abstract class Leaf<K extends FieldCustomization<K>> extends Composite {
+abstract class Leaf<K extends PredicateScoreStep> extends Composite {
 
     String field
     Boolean ignoreAnalyzer = false
     Boolean ignoreFieldBridge = false
     float boostedTo
 
-    abstract Query createQuery(K fieldCustomization)
-
-    abstract K createFieldCustomization()
+    abstract K createPredicateScoreStep()
 
     @Override
     def leftShift(component) {
@@ -20,107 +24,92 @@ abstract class Leaf<K extends FieldCustomization<K>> extends Composite {
     }
 
     @Override
-    Query createQuery() {
-        K fieldCustomization = createFieldCustomization()
+    SearchPredicate createSearchPredicate() {
+        checkBoost(createPredicateScoreStep()).toPredicate()
+    }
 
-        if (ignoreAnalyzer) {fieldCustomization = fieldCustomization.ignoreAnalyzer()}
+    MatchPredicateOptionsStep checkSkipAnalysis(MatchPredicateOptionsStep step) {
+        ignoreAnalyzer ? step.skipAnalysis() : step
+    }
 
-        if (ignoreFieldBridge) {fieldCustomization = fieldCustomization.ignoreFieldBridge()}
+    PredicateFinalStep checkBoost(K step) {
+        (boostedTo ? step.boost(boostedTo) : step) as PredicateFinalStep
+    }
 
-        if (boostedTo) {fieldCustomization = fieldCustomization.boostedTo(boostedTo)}
-
-        createQuery(fieldCustomization)
+    ValueConvert getValueConvert() {
+        ignoreFieldBridge ? ValueConvert.NO : ValueConvert.YES
     }
 }
 
-class BelowComponent extends Leaf<RangeMatchingContext> {
+class BelowComponent extends Leaf<RangePredicateOptionsStep> {
     def below
 
-    Query createQuery(RangeMatchingContext fieldCustomization) {
-        fieldCustomization.below(below).createQuery()
-    }
-
-    RangeMatchingContext createFieldCustomization() {
-        queryBuilder.range().onField(field)
+    RangePredicateOptionsStep createPredicateScoreStep() {
+        getPredicateBuilder().range().field(field).atMost(below)
     }
 }
 
-class AboveComponent extends Leaf<RangeMatchingContext> {
-    def above
-
-    Query createQuery(RangeMatchingContext fieldCustomization) {
-        fieldCustomization.above(above).createQuery()
-    }
-
-    RangeMatchingContext createFieldCustomization() {
-        queryBuilder.range().onField(field)
-    }
-}
-
-class KeywordComponent extends Leaf<TermMatchingContext> {
-    def matching
-
-    Query createQuery(TermMatchingContext fieldCustomization) {
-        fieldCustomization.matching(matching).createQuery()
-    }
-
-    TermMatchingContext createFieldCustomization() {
-        queryBuilder.keyword().onField(field)
-    }
-}
-
-class BetweenComponent extends Leaf<RangeMatchingContext> {
+class BetweenComponent extends Leaf<RangePredicateOptionsStep> {
     def from
     def to
 
-    Query createQuery(RangeMatchingContext fieldCustomization) {
-        fieldCustomization.from(from).to(to).createQuery()
-    }
-
-    RangeMatchingContext createFieldCustomization() {
-        queryBuilder.range().onField(field)
+    RangePredicateOptionsStep createPredicateScoreStep() {
+        getPredicateBuilder().range().field(field).between(from, to)
     }
 }
 
-class FuzzyComponent extends Leaf<TermMatchingContext> {
+class AboveComponent extends Leaf<RangePredicateOptionsStep> {
+    def above
+
+    RangePredicateOptionsStep createPredicateScoreStep() {
+        getPredicateBuilder().range().field(field).atLeast(above)
+    }
+}
+
+class KeywordComponent extends Leaf<MatchPredicateOptionsStep> {
     def matching
-    float threshold
+
+    MatchPredicateOptionsStep createPredicateScoreStep() {
+        checkSkipAnalysis getPredicateBuilder().match().field(field).matching(matching, getValueConvert())
+    }
+}
+
+class FuzzyComponent extends Leaf<MatchPredicateOptionsStep> {
+    def matching
+
     int prefixLength
     int maxDistance
 
-    Query createQuery(TermMatchingContext fieldCustomization) {
-        fieldCustomization.matching(matching).createQuery()
-    }
+    @Deprecated
+    float threshold
 
-    TermMatchingContext createFieldCustomization() {
-        FuzzyContext context = queryBuilder.keyword().fuzzy()
-        if (threshold) {context.withThreshold(threshold)}
-        if (maxDistance) {context.withEditDistanceUpTo(maxDistance)}
-        if (prefixLength) {context.withPrefixLength(prefixLength)}
-        context.onField(field)
-    }
-}
+    MatchPredicateOptionsStep createPredicateScoreStep() {
+        MatchPredicateOptionsStep step = getPredicateBuilder().match().field(field).matching(matching, getValueConvert())
 
-class WildcardComponent extends Leaf<TermMatchingContext> {
-    def matching
+        if (maxDistance) {
+            if (prefixLength) step = step.fuzzy(maxDistance, prefixLength)
+            else step = step.fuzzy(maxDistance)
+        }
 
-    Query createQuery(TermMatchingContext fieldCustomization) {
-        fieldCustomization.matching(matching).createQuery()
-    }
-
-    TermMatchingContext createFieldCustomization() {
-        queryBuilder.keyword().wildcard().onField(field)
+        if (threshold) {
+            log.warn('DEPRECATED : [threshold] has been removed from the fuzzy search functionality')
+        }
+        checkSkipAnalysis step
     }
 }
 
-class PhraseComponent extends Leaf<PhraseMatchingContext> {
+class WildcardComponent extends Leaf<WildcardPredicateOptionsStep> {
+    String matching
+
+    WildcardPredicateOptionsStep createPredicateScoreStep() {
+        getPredicateBuilder().wildcard().field(field).matching(matching)
+    }
+}
+
+class PhraseComponent extends Leaf<PhrasePredicateOptionsStep> {
     String sentence
 
-    Query createQuery(PhraseMatchingContext fieldCustomization) {
-        fieldCustomization.sentence(sentence).createQuery()
-    }
-
-    PhraseMatchingContext createFieldCustomization() {
-        queryBuilder.phrase().onField(field)
+    PhrasePredicateOptionsStep createPredicateScoreStep() {
+        getPredicateBuilder().phrase().field(field).matching(sentence)
     }
 }

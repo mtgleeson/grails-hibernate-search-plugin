@@ -1,38 +1,27 @@
 package grails.plugins.hibernate.search.component
 
-import grails.plugins.hibernate.search.HibernateSearchGrailsPlugin
-import org.apache.lucene.search.Query
-import org.hibernate.search.exception.EmptyQueryException
-import org.hibernate.search.query.dsl.BooleanJunction
+
+import groovy.transform.stc.ClosureParams
+import groovy.transform.stc.SimpleType
+import org.hibernate.search.engine.search.predicate.SearchPredicate
+import org.hibernate.search.engine.search.predicate.dsl.BooleanPredicateClausesStep
 
 abstract class Composite extends Component {
 
     /**
      * @return true if composite contains at least one valid (not empty) query
      */
-    protected boolean forEachQuery(Closure action) {
+    protected boolean forEachQuery(@DelegatesTo(SearchPredicate)
+                                   @ClosureParams(value = SimpleType, options = 'org.hibernate.search.engine.search.predicate.SearchPredicate') Closure action) {
 
         boolean notEmpty = false
         if (children) {
-
             for (child in children) {
-                try {
-
-                    Query subQuery = child.createQuery()
-
-                    action.delegate = subQuery
-                    action.resolveStrategy = Closure.DELEGATE_FIRST
-                    action.call(subQuery)
-                    notEmpty = true
-
-                } catch (EmptyQueryException e) {
-                    if (HibernateSearchGrailsPlugin.pluginConfig.throwExceptionOnEmptyQuery) {
-                        throw e
-                    }
-                    else {
-                        log.warn 'empty Hibernate search query ignored! ' + child, e
-                    }
-                }
+                SearchPredicate subQuery = child.createSearchPredicate()
+                action.delegate = subQuery
+                action.resolveStrategy = Closure.DELEGATE_FIRST
+                action.call(subQuery)
+                notEmpty = true
             }
         }
         notEmpty
@@ -40,35 +29,35 @@ abstract class Composite extends Component {
 }
 
 class MustNotComponent extends Composite {
-    Query createQuery() {
+    SearchPredicate createSearchPredicate() {
+        BooleanPredicateClausesStep booleanStep = predicateBuilder.bool()
 
-        BooleanJunction query = queryBuilder.bool()
         boolean notEmpty = forEachQuery {subQuery ->
-            query = query.must(subQuery).not()
+            booleanStep = booleanStep.mustNot(subQuery)
         }
 
-        notEmpty ? query.createQuery() : queryBuilder.all().createQuery()
+        notEmpty ? booleanStep.toPredicate() : predicateBuilder.matchAll().toPredicate()
     }
 }
 
 class MustComponent extends Composite {
-    Query createQuery() {
-        BooleanJunction query = queryBuilder.bool()
+    SearchPredicate createSearchPredicate() {
+        BooleanPredicateClausesStep booleanStep = predicateBuilder.bool()
         boolean notEmpty = forEachQuery {subQuery ->
-            query = query.must(subQuery)
+            booleanStep = booleanStep.must(subQuery)
         }
 
-        notEmpty ? query.createQuery() : queryBuilder.all().createQuery()
+        notEmpty ? booleanStep.toPredicate() : predicateBuilder.matchAll().toPredicate()
     }
 }
 
 class ShouldComponent extends Composite {
-    Query createQuery() {
-        BooleanJunction query = queryBuilder.bool()
+    SearchPredicate createSearchPredicate() {
+        BooleanPredicateClausesStep booleanStep = predicateBuilder.bool()
         boolean notEmpty = forEachQuery {subQuery ->
-            query = query.should(subQuery)
+            booleanStep = booleanStep.should(subQuery)
         }
 
-        notEmpty ? query.createQuery() : queryBuilder.all().createQuery()
+        notEmpty ? booleanStep.toPredicate() : predicateBuilder.matchAll().toPredicate()
     }
 }
