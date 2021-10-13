@@ -2,5 +2,5 @@
 # Add key=value pairs of SDKs to use below
 java=16.0.1.j9-adpt
 gradle=7.2
-grails=5.0.0-RC4
+grails=5.0.0
 groovy=3.0.8
