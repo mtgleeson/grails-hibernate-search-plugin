@@ -3,7 +3,6 @@ package grails.plugins.hibernate.search
 import grails.plugins.Plugin
 import grails.plugins.hibernate.search.config.HibernateSearchConfig
 import grails.plugins.hibernate.search.config.SearchMappingEntityConfig
-import grails.plugins.hibernate.search.mapper.orm.mapping.HibernateSearchMappingConfigurer
 import grails.util.Environment
 import org.grails.core.artefact.DomainClassArtefactHandler
 import org.grails.datastore.mapping.reflect.ClassPropertyFetcher
@@ -22,7 +21,7 @@ class HibernateSearchGrailsPlugin extends Plugin {
 
     public static HibernateSearchConfig pluginConfig
 
-    def grailsVersion = "5.0 > *"
+    def grailsVersion = "4.0.0 > *"
 
     // resources that are excluded from plugin packaging
     def pluginExcludes = [
@@ -30,7 +29,7 @@ class HibernateSearchGrailsPlugin extends Plugin {
     ]
 
     def observe = ["domainClass"]
-    def dependsOn = [hibernate: "* > 6.0"]
+    def dependsOn = [hibernate: "7.0.0 > *"]
     def loadAfter = ['hibernate']
     def title = "Hibernate Search Plugin"
     def author = "Mathieu Perez, Julie Ingignoli, Louis Grignon"
@@ -50,7 +49,7 @@ class HibernateSearchGrailsPlugin extends Plugin {
 
     Closure doWithSpring() {
         {->
-            if (!grailsApplication.config.hibernate.search.backend.directory.root) {
+            if (!grailsApplication.config.getProperty('hibernate.search.backend.directory.root', String)) {
                 StringBuilder indexPathBuilder = new StringBuilder()
                     .append(System.getProperty('user.home'))
                     .append(File.separator)
@@ -65,11 +64,11 @@ class HibernateSearchGrailsPlugin extends Plugin {
                     .append('lucene-index')
                     .append(File.separator)
                     .append(Environment.getCurrent().name())
-                grailsApplication.config.hibernate.search.backend.directory.root = indexPathBuilder.toString()
+                grailsApplication.config.setAt('hibernate.search.backend.directory.root', indexPathBuilder.toString())
             }
 
-            hibernateSearchMappingConfigurer(HibernateSearchMappingConfigurer)
-            grailsApplication.config.hibernate.search.mapping.configurer = ref('hibernateSearchMappingConfigurer')
+            //            hibernateSearchMappingConfigurer(HibernateSearchMappingConfigurer)
+            //            grailsApplication.config.setAt('',  ref('hibernateSearchMappingConfigurer'))
         }
     }
 
