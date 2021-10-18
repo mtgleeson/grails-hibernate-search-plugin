@@ -20,6 +20,7 @@ import org.hibernate.search.engine.backend.types.Projectable
 import org.hibernate.search.engine.backend.types.Searchable
 import org.hibernate.search.engine.backend.types.Sortable
 import org.hibernate.search.engine.backend.types.TermVector
+import org.hibernate.search.mapper.pojo.bridge.mapping.programmatic.PropertyBinder
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.ProgrammaticMappingConfigurationContext
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingFullTextFieldOptionsStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingGenericFieldOptionsStep
@@ -28,7 +29,7 @@ import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.Property
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingNonFullTextFieldOptionsStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingStandardFieldOptionsStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingStep
-import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.TypeMappingStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.impl.TypeMappingStepImpl
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -45,20 +46,25 @@ class SearchMappingEntityConfig {
 
     private Object analyzer
     private final GrailsClass domainClass
-    private final TypeMappingStep entityMapping
+    private final TypeMappingStepImpl typeMappingStep
     private final List<String> indexedPropertyNames
+    private final List<String> parentIndexedFields
+    private final ProgrammaticMappingConfigurationContext mapping
 
-    SearchMappingEntityConfig(ProgrammaticMappingConfigurationContext mapping, GrailsClass domainClass) {
+    SearchMappingEntityConfig(ProgrammaticMappingConfigurationContext mapping, GrailsClass domainClass, List<String> parentIndexedFields) {
         this.indexedPropertyNames = []
         this.domainClass = domainClass
-        this.entityMapping = mapping.type(domainClass.clazz)
+        this.typeMappingStep = mapping.type(domainClass.clazz) as TypeMappingStepImpl
+        this.parentIndexedFields = parentIndexedFields
+        this.mapping = mapping
 
         // Only index non-abstract classes
-        if (!domainClass.isAbstract()) {
-            entityMapping.indexed()
+        // If there are any parent indexed fields then the entity is already marked as indexed as it is a subclass
+        if (!domainClass.isAbstract() && !parentIndexedFields) {
+            typeMappingStep.indexed()
 
             // Add id property
-            entityMapping.property(IDENTITY).keywordField().documentId()
+            typeMappingStep.property(IDENTITY).keywordField().documentId()
         }
     }
 
@@ -81,14 +87,28 @@ class SearchMappingEntityConfig {
             return
         }
 
+        if (name in parentIndexedFields) {
+            log.info('Cannot add property [{}] is already indexed by a superclass', name)
+            return
+        }
+
         String propertyName = backingField.getName()
         String fieldName = args.name ?: name
         Class fieldType = backingField.type
 
-        log.debug 'Property {}.{} found', domainClass.clazz.canonicalName, fieldName
+        log.debug 'Property {}.{} found with field name [{}] to be indexed', domainClass.clazz.canonicalName, propertyName, fieldName
         indexedPropertyNames.add(name)
 
-        PropertyMappingStep propertyMappingStep = entityMapping.property(propertyName)
+        PropertyMappingStep propertyMappingStep = typeMappingStep.property(fieldName)
+
+        // Issue exists when the backingfield is inside a trait as the property name is then long format and wont match up
+        // Unable to resolve path 'xxxx__yyyy' to a persisted attribute in Hibernate ORM metadata
+        // org.hibernate.search.mapper.orm.model.impl.HibernateOrmClassRawTypeModel.findPropertyMember
+        // PR open https://github.com/hibernate/hibernate-search/pull/2686
+        if (propertyName != fieldName) {
+            log.warn('Conflicting indexing on property [{}] with field name [{}]. ' +
+                     'This will produce an orm mapping issue without HSEARCH-4348 fixed.', propertyName, fieldName)
+        }
 
         if (args.indexEmbedded) {
 
@@ -171,6 +191,24 @@ class SearchMappingEntityConfig {
                 fieldOptionsStep.norms(Norms.valueOf((args.norms as String).toUpperCase()))
             }
         }
+        if (args.binder) {
+            def binder = args.binder
+            if (binder instanceof PropertyBinder) {
+                fieldOptionsStep.binder(binder)
+            } else if (binder instanceof Class<PropertyBinder>) {
+                fieldOptionsStep.binder((binder as Class<PropertyBinder>).getDeclaredConstructor().newInstance())
+            } else if (binder instanceof Map) {
+                if (binder.class instanceof Class<PropertyBinder>) {
+                    Class[] paramTypes = [] as Class[]
+                    Object[] instArgs = [] as Object[]
+                    if (binder.args) {
+                        instArgs = binder.args
+                        paramTypes = binder.args.collect {it.class}.toArray(paramTypes)
+                    }
+                    fieldOptionsStep.binder((binder.class as Class<PropertyBinder>).getDeclaredConstructor(paramTypes).newInstance(instArgs))
+                }
+            }
+        }
 
         if (args.numeric) {
             logUpdatedPropertyWarning(fieldName, 'numeric', 'removed')
@@ -186,7 +224,7 @@ class SearchMappingEntityConfig {
 
         if (args.bridge) {
             fieldOptionsStep.valueBridge(args.bridge['class'] as Class)
-            logUpdatedPropertyWarning(fieldName, 'bridge.params', 'use ValueBinder instead')
+            logUpdatedPropertyWarning(fieldName, 'bridge.params', 'use ValueBridges or PropertyBinders instead')
         }
         if (args.sortable) {
             implementSortable(propertyMappingStep, fieldOptionsStep, fieldName, args.sortable)
