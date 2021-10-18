@@ -3,6 +3,7 @@ package grails.plugins.hibernate.search
 import grails.plugins.Plugin
 import grails.plugins.hibernate.search.config.HibernateSearchConfig
 import grails.plugins.hibernate.search.config.SearchMappingEntityConfig
+import grails.plugins.hibernate.search.mapper.orm.mapping.GrailsHibernateSearchMappingConfigurer
 import grails.util.Environment
 import org.grails.core.artefact.DomainClassArtefactHandler
 import org.grails.datastore.mapping.reflect.ClassPropertyFetcher
@@ -65,10 +66,10 @@ class HibernateSearchGrailsPlugin extends Plugin {
                     .append(File.separator)
                     .append(Environment.getCurrent().name())
                 grailsApplication.config.setAt('hibernate.search.backend.directory.root', indexPathBuilder.toString())
+                log.warn '[hibernate.search.backend.directory.root] was empty so has been set to [{}]', indexPathBuilder.toString()
             }
 
-            //            hibernateSearchMappingConfigurer(HibernateSearchMappingConfigurer)
-            //            grailsApplication.config.setAt('',  ref('hibernateSearchMappingConfigurer'))
+            hibernateSearchMappingConfigurer(GrailsHibernateSearchMappingConfigurer)
         }
     }
 
