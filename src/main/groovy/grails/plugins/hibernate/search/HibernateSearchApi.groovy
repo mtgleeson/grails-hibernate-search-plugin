@@ -29,11 +29,10 @@ import grails.plugins.hibernate.search.component.ShouldComponent
 import grails.plugins.hibernate.search.component.SimpleQueryStringComponent
 import grails.plugins.hibernate.search.component.WildcardComponent
 import grails.plugins.hibernate.search.config.HibernateSearchConfig
+import grails.plugins.hibernate.search.filter.FilterFactory
 import groovy.util.logging.Slf4j
-import org.apache.lucene.analysis.Analyzer
 import org.hibernate.Session
 import org.hibernate.Transaction
-import org.hibernate.search.backend.lucene.index.LuceneIndexManager
 import org.hibernate.search.engine.search.predicate.SearchPredicate
 import org.hibernate.search.engine.search.predicate.dsl.BooleanPredicateClausesStep
 import org.hibernate.search.engine.search.predicate.dsl.SearchPredicateFactory
@@ -47,6 +46,7 @@ import org.hibernate.search.engine.search.sort.dsl.FieldSortOptionsStep
 import org.hibernate.search.engine.search.sort.dsl.SearchSortFactory
 import org.hibernate.search.engine.search.sort.dsl.SortOrder
 import org.hibernate.search.mapper.orm.Search
+import org.hibernate.search.mapper.orm.entity.SearchIndexedEntity
 import org.hibernate.search.mapper.orm.mapping.SearchMapping
 import org.hibernate.search.mapper.orm.massindexing.MassIndexer
 import org.hibernate.search.mapper.orm.scope.SearchScope
@@ -73,7 +73,7 @@ class HibernateSearchApi {
     private Integer maxResults = 0
     private Integer offset = 0
     private final List<SearchPredicate> filterPredicates = []
-    private final List projection = []
+    private final List<String> projections = []
 
     private Component root
     private Component currentNode
@@ -155,12 +155,12 @@ class HibernateSearchApi {
     }
 
     void projection(String... projection) {
-        this.projection.addAll(projection)
+        this.projections.addAll(projection)
     }
 
     @Deprecated
     void criteria(Closure criteria) {
-        throw log.warn(
+        log.warn(
             'DEPRECATED: Hibernate Search 6 does not allow criteria to be added to a search (https://docs.jboss.org/hibernate/search/6' +
             '.0/migration/html_single/#searching-fulltextquery-setCriteriaQuery)')
     }
@@ -200,9 +200,16 @@ class HibernateSearchApi {
      *
      * @return the scoped analyzer for this entity
      */
-    Analyzer getAnalyzer() {
-        SearchMapping searchMapping = Search.mapping(searchSession.toOrmSession().sessionFactory)
-        searchMapping.indexedEntity(clazz).indexManager().unwrap(LuceneIndexManager.class).searchAnalyzer()
+    @Deprecated
+    def getAnalyzer() {
+        log.warn(
+            'DEPRECATED: Hibernate Search 6 does not allow a class level analyzer to be defined.' +
+            'All fields must specify their analyzer explicitly or rely on the global (default) analyzer.' +
+            'https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#analyzer')
+    }
+
+    SearchPredicateFactory getSearchPredicateFactory() {
+        searchScope.predicate()
     }
 
     /**
@@ -237,6 +244,10 @@ class HibernateSearchApi {
         filterPredicates << filterPredicate
     }
 
+    void filter(FilterFactory filterFactory, Map params) {
+        filterPredicates << filterFactory.create(searchPredicateFactory, params)
+    }
+
     void filter(String filterName) {
         log.warn(
             'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6' +
@@ -251,7 +262,8 @@ class HibernateSearchApi {
 
     void filter(String filterName, Map<String, Object> filterParams) {
         log.warn(
-            'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#full-text-filter')
+            'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6' +
+            '.0/migration/html_single/#full-text-filter')
     }
 
     void below(String field, below, Map optionalParams = [:]) {
@@ -329,6 +341,15 @@ class HibernateSearchApi {
         callable.call()
     }
 
+    Map<String, Object> getIndexedProperties() {
+        [:]
+    }
+
+    Collection<SearchIndexedEntity> getIndexedEntities() {
+        SearchMapping searchMapping = Search.mapping(searchSession.toOrmSession().sessionFactory)
+        searchMapping.allIndexedEntities()
+    }
+
     private SearchQueryOptionsStep createFullTextQuery() {
 
         SearchPredicate primarySearchPredicate = root.createSearchPredicate()
@@ -344,14 +365,14 @@ class HibernateSearchApi {
         }
 
         SearchQueryWhereStep whereStep = searchSession.search(clazz)
-        if (projection) {
+        if (projections) {
             SearchProjectionFactory projectionFactory = searchScope.projection()
             ProjectionFinalStep projectionFinalStep
 
-            if (projection.size() == 1) {
-                projectionFinalStep = projectionFactory.field(projection.first().toString())
+            if (projections.size() == 1) {
+                projectionFinalStep = projectionFactory.field(projections.first())
             } else {
-                FieldProjectionValueStep[] fields = projection.collect {projectionFactory.field(it.toString())}.toArray() as FieldProjectionValueStep[]
+                FieldProjectionValueStep[] fields = projections.collect {projectionFactory.field(it)}.toArray() as FieldProjectionValueStep[]
                 projectionFinalStep = projectionFactory.composite(fields)
             }
             whereStep = whereStep.select(projectionFinalStep.toProjection())
