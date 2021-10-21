@@ -14,12 +14,12 @@
  */
 package grails.plugins.hibernate.search.mapper.orm.mapping
 
-
 import grails.core.GrailsApplication
 import grails.core.GrailsClass
 import grails.plugins.hibernate.search.HibernateSearchGrailsPlugin
 import grails.plugins.hibernate.search.config.SearchMappingEntityConfig
 import grails.plugins.hibernate.search.config.SearchMappingGlobalConfig
+import grails.util.Environment
 import grails.util.Holders
 import groovy.util.logging.Slf4j
 import org.grails.core.artefact.DomainClassArtefactHandler
@@ -32,8 +32,6 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.core.annotation.AnnotationUtils
 
-import static grails.plugins.hibernate.search.HibernateSearchGrailsPlugin.INDEXED_ENTITIES_GRAILS_APP_CONFIG_KEY
-
 /**
  * @since 11/10/2021
  */
@@ -43,15 +41,32 @@ class GrailsHibernateSearchMappingConfigurer implements HibernateOrmSearchMappin
     private final static Logger pluginLogger = LoggerFactory.getLogger(HibernateSearchGrailsPlugin)
 
     GrailsApplication grailsApplication
-    private final Map<String, List<String>> indexedPropertiesByName
 
     GrailsHibernateSearchMappingConfigurer() {
-        indexedPropertiesByName = [:]
         grailsApplication = Holders.getGrailsApplication()
     }
 
     @Override
     void configure(HibernateOrmMappingConfigurationContext context) {
+
+        if (!grailsApplication.config.getProperty('hibernate.search.backend.directory.root', String)) {
+            StringBuilder indexPathBuilder = new StringBuilder()
+                .append(System.getProperty('user.home'))
+                .append(File.separator)
+                .append('.grails')
+                .append(File.separator)
+                .append(grailsApplication.metadata.getGrailsVersion())
+                .append(File.separator)
+                .append('projects')
+                .append(File.separator)
+                .append(grailsApplication.metadata.getApplicationName())
+                .append(File.separator)
+                .append('lucene-index')
+                .append(File.separator)
+                .append(Environment.getCurrent().name())
+            grailsApplication.config.setAt('hibernate.search.backend.directory.root', indexPathBuilder.toString())
+            log.warn '[hibernate.search.backend.directory.root] was empty so has been set to [{}]', indexPathBuilder.toString()
+        }
 
         configureGlobal(context)
 
@@ -95,10 +110,6 @@ class GrailsHibernateSearchMappingConfigurer implements HibernateOrmSearchMappin
         for (DomainClassDependency dcd : dependencyGraph) {
             configureDomainClassDependency(dcd, programmaticMappingConfigurationContext)
         }
-
-        log.debug('Registering indexed properties to Grails config key {}', INDEXED_ENTITIES_GRAILS_APP_CONFIG_KEY)
-        log.trace('Indexed properties {}', indexedPropertiesByName)
-        grailsApplication.config[INDEXED_ENTITIES_GRAILS_APP_CONFIG_KEY] = indexedPropertiesByName
     }
 
     void configureDomainClassDependency(DomainClassDependency domainClassDependency,
@@ -115,7 +126,6 @@ class GrailsHibernateSearchMappingConfigurer implements HibernateOrmSearchMappin
         Closure searchClosure = ClassPropertyFetcher.forClass(domainClass.getClazz()).getStaticPropertyValue(SearchMappingEntityConfig.INDEX_CONFIG_NAME, Closure)
         List<String> indexedFields = new ArrayList<>(parentFields)
         if (searchClosure != null) {
-            pluginLogger.info '* {} is indexed', domainClass.name
 
             SearchMappingEntityConfig searchMappingEntityConfig = new SearchMappingEntityConfig(programmaticMappingConfigurationContext, domainClass, parentFields)
 
@@ -125,7 +135,6 @@ class GrailsHibernateSearchMappingConfigurer implements HibernateOrmSearchMappin
 
             if (searchMappingEntityConfig.indexedPropertyNames) {
                 indexedFields.addAll(searchMappingEntityConfig.indexedPropertyNames)
-                indexedPropertiesByName[domainClass.getName()] = indexedFields
             }
         } else if (AnnotationUtils.isAnnotationDeclaredLocally(Indexed, domainClass.clazz)) {
             pluginLogger.info '* {} is indexed using annotations', domainClass.name

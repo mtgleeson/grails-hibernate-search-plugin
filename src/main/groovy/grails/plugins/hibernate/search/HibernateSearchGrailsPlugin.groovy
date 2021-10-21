@@ -1,10 +1,9 @@
 package grails.plugins.hibernate.search
 
 import grails.plugins.Plugin
-import grails.plugins.hibernate.search.config.HibernateSearchConfig
 import grails.plugins.hibernate.search.config.SearchMappingEntityConfig
 import grails.plugins.hibernate.search.mapper.orm.mapping.GrailsHibernateSearchMappingConfigurer
-import grails.util.Environment
+import grails.plugins.hibernate.search.mapper.orm.massindexing.RebuildOnStartMassIndexer
 import org.grails.core.artefact.DomainClassArtefactHandler
 import org.grails.datastore.mapping.reflect.ClassPropertyFetcher
 import org.hibernate.SessionFactory
@@ -20,9 +19,7 @@ class HibernateSearchGrailsPlugin extends Plugin {
 
     private final static Logger log = LoggerFactory.getLogger(this)
 
-    public static HibernateSearchConfig pluginConfig
-
-    def grailsVersion = "4.0.0 > *"
+    def grailsVersion = "4.0.6 > *"
 
     // resources that are excluded from plugin packaging
     def pluginExcludes = [
@@ -50,31 +47,15 @@ class HibernateSearchGrailsPlugin extends Plugin {
 
     Closure doWithSpring() {
         {->
-            if (!grailsApplication.config.getProperty('hibernate.search.backend.directory.root', String)) {
-                StringBuilder indexPathBuilder = new StringBuilder()
-                    .append(System.getProperty('user.home'))
-                    .append(File.separator)
-                    .append('.grails')
-                    .append(File.separator)
-                    .append(grailsApplication.metadata.getGrailsVersion())
-                    .append(File.separator)
-                    .append('projects')
-                    .append(File.separator)
-                    .append(grailsApplication.metadata.getApplicationName())
-                    .append(File.separator)
-                    .append('lucene-index')
-                    .append(File.separator)
-                    .append(Environment.getCurrent().name())
-                grailsApplication.config.setAt('hibernate.search.backend.directory.root', indexPathBuilder.toString())
-                log.warn '[hibernate.search.backend.directory.root] was empty so has been set to [{}]', indexPathBuilder.toString()
-            }
-
             hibernateSearchMappingConfigurer(GrailsHibernateSearchMappingConfigurer)
         }
     }
 
     @Override
     void doWithApplicationContext() {
+        if (grailsApplication.config.getProperty('grails.plugins.hibernatesearch.rebuildIndexOnStart')) {
+            RebuildOnStartMassIndexer.rebuild(applicationContext, grailsApplication.config.getProperty('grails.plugins.hibernatesearch.rebuildIndexOnStart'))
+        }
     }
 
     @Override

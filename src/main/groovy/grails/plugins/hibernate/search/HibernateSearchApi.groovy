@@ -28,7 +28,6 @@ import grails.plugins.hibernate.search.component.PhraseComponent
 import grails.plugins.hibernate.search.component.ShouldComponent
 import grails.plugins.hibernate.search.component.SimpleQueryStringComponent
 import grails.plugins.hibernate.search.component.WildcardComponent
-import grails.plugins.hibernate.search.config.HibernateSearchConfig
 import grails.plugins.hibernate.search.filter.FilterFactory
 import groovy.util.logging.Slf4j
 import org.hibernate.Session
@@ -58,8 +57,6 @@ class HibernateSearchApi {
 
     private static final List MASS_INDEXER_METHODS = MassIndexer.methods.findAll {it.returnType == MassIndexer}*.name
 
-    private final HibernateSearchConfig pluginConfig
-
     private final SearchSession searchSession
     private final GrailsClass grailsDomainClass
     private final Class clazz
@@ -78,17 +75,16 @@ class HibernateSearchApi {
     private Component root
     private Component currentNode
 
-    HibernateSearchApi(GrailsClass domainClass, instance, Session session, HibernateSearchConfig pluginConfig) {
+    HibernateSearchApi(GrailsClass domainClass, instance, Session session) {
         this.grailsDomainClass = domainClass
         this.clazz = domainClass.clazz
         this.searchSession = Search.session(session)
         this.instance = instance
         this.staticContext = instance == null
-        this.pluginConfig = pluginConfig
     }
 
-    HibernateSearchApi(GrailsClass domainClass, Session session, HibernateSearchConfig pluginConfig) {
-        this(domainClass, null, session, pluginConfig)
+    HibernateSearchApi(GrailsClass domainClass, Session session) {
+        this(domainClass, null, session)
     }
 
     /**
