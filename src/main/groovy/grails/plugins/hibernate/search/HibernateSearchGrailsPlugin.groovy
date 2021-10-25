@@ -78,12 +78,12 @@ class HibernateSearchGrailsPlugin extends Plugin {
             if (ClassPropertyFetcher.forClass(clazz).getStaticPropertyValue(SearchMappingEntityConfig.INDEX_CONFIG_NAME, Closure) ||
                 AnnotationUtils.isAnnotationDeclaredLocally(Indexed, clazz)) {
                 domainClass.metaClass.static.search = {
-                    new HibernateSearchApi(domainClass, applicationContext.getBean(SessionFactory).getCurrentSession(), pluginConfig)
+                    new HibernateSearchApi(domainClass, applicationContext.getBean(SessionFactory))
                 }
 
                 domainClass.metaClass.search = {
                     def instance = delegate
-                    new HibernateSearchApi(domainClass, instance, applicationContext.getBean(SessionFactory).getCurrentSession(), pluginConfig)
+                    new HibernateSearchApi(domainClass, instance, applicationContext.getBean(SessionFactory))
                 }
             }
         }

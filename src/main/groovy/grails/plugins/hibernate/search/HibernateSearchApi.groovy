@@ -30,7 +30,7 @@ import grails.plugins.hibernate.search.component.SimpleQueryStringComponent
 import grails.plugins.hibernate.search.component.WildcardComponent
 import grails.plugins.hibernate.search.filter.FilterFactory
 import groovy.util.logging.Slf4j
-import org.hibernate.Session
+import org.hibernate.SessionFactory
 import org.hibernate.Transaction
 import org.hibernate.search.engine.search.predicate.SearchPredicate
 import org.hibernate.search.engine.search.predicate.dsl.BooleanPredicateClausesStep
@@ -57,11 +57,11 @@ class HibernateSearchApi {
 
     private static final List MASS_INDEXER_METHODS = MassIndexer.methods.findAll {it.returnType == MassIndexer}*.name
 
-    private final SearchSession searchSession
     private final GrailsClass grailsDomainClass
     private final Class clazz
     private final instance
     private final staticContext
+    private final SessionFactory sessionFactory
 
     private FieldSortOptionsStep fieldSortOptionsStep
     private SearchScope searchScope
@@ -75,16 +75,28 @@ class HibernateSearchApi {
     private Component root
     private Component currentNode
 
-    HibernateSearchApi(GrailsClass domainClass, instance, Session session) {
-        this.grailsDomainClass = domainClass
-        this.clazz = domainClass.clazz
-        this.searchSession = Search.session(session)
-        this.instance = instance
-        this.staticContext = instance == null
+    static Closure defineSearchQuery(@DelegatesTo(HibernateSearchApi) closure) {
+        closure
     }
 
-    HibernateSearchApi(GrailsClass domainClass, Session session) {
-        this(domainClass, null, session)
+    HibernateSearchApi(GrailsClass domainClass, instance, SessionFactory sessionFactory) {
+        this.grailsDomainClass = domainClass
+        this.clazz = domainClass.clazz
+        this.instance = instance
+        this.staticContext = instance == null
+        this.sessionFactory = sessionFactory
+    }
+
+    HibernateSearchApi(GrailsClass domainClass, SessionFactory sessionFactory) {
+        this(domainClass, null, sessionFactory)
+    }
+
+    SearchSession getSearchSession() {
+        Search.session(sessionFactory.currentSession)
+    }
+
+    SearchPredicateFactory getSearchPredicateFactory() {
+        searchScope.predicate()
     }
 
     /**
@@ -204,10 +216,6 @@ class HibernateSearchApi {
             'https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#analyzer')
     }
 
-    SearchPredicateFactory getSearchPredicateFactory() {
-        searchScope.predicate()
-    }
-
     /**
      * Force the (re)indexing of a given <b>managed</b> object.
      * Indexation is batched per transaction: if a transaction is active, the operation
@@ -244,18 +252,21 @@ class HibernateSearchApi {
         filterPredicates << filterFactory.create(searchPredicateFactory, params)
     }
 
+    @Deprecated
     void filter(String filterName) {
         log.warn(
             'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6' +
             '.0/migration/html_single/#full-text-filter')
     }
 
+    @Deprecated
     void filter(Map<String, Object> filterParams) {
         log.warn(
             'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6' +
             '.0/migration/html_single/#full-text-filter')
     }
 
+    @Deprecated
     void filter(String filterName, Map<String, Object> filterParams) {
         log.warn(
             'DEPRECATED: Filters must now be defined using factories which return a SearchPredicate. https://docs.jboss.org/hibernate/search/6' +
