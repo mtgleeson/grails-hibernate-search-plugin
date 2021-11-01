@@ -38,6 +38,7 @@ jar {
 repositories {
 	mavenLocal()
 	maven { url "https://repo.grails.org/grails/core" }
+	maven {url "https://jenkins.cs.ox.ac.uk/artifactory/libs-release"}
 }
 
 dependencies {
@@ -59,8 +60,8 @@ dependencies {
 	compile "org.hibernate:hibernate-core:5.4.4.Final"
 	compile "org.hibernate:hibernate-ehcache:5.4.4.Final"
 
-	compile "org.hibernate.search:hibernate-search-mapper-orm:6.0.8-SNAPSHOT"
-//	compile "org.hibernate.search:hibernate-search-v5migrationhelper-orm:6.0.6.Final" // Migration helper
+	compile "org.hibernate.search:hibernate-search-mapper-orm:6.0.8.OXBRC"
+	//compile "org.hibernate.search:hibernate-search-v5migrationhelper-orm:6.0.8.OXBRC" // Migration helper
 
 	compile "org.grails:grails-plugin-services"
 	compile "org.grails:grails-plugin-domain-class"
