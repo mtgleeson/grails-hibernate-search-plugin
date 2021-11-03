@@ -282,8 +282,7 @@ class SearchMappingEntityConfig {
         }
 
         if (args.bridge) {
-            logUpdatedPropertyWarning(fieldName, 'bridge.params', 'use ValueBridges or PropertyBinders instead')
-            fieldOptionsStep.valueBridge(args.remove('bridge')['class'] as Class)
+            fieldOptionsStep.valueBridge(args.remove('bridge'))
         }
 
         if (fieldOptionsStep instanceof PropertyMappingFullTextFieldOptionsStep) {
@@ -422,6 +421,11 @@ class SearchMappingEntityConfig {
             argMap.projectable = argMap.projectable ?: argMap.remove('store')
         }
 
+        if (argMap.bridge && argMap.bridge instanceof Map) {
+            Map bridgeMap = argMap.bridge as Map
+            logUpdatedPropertyWarning(fieldName, 'bridge as Map', 'use ValueBridges or PropertyBinders instead')
+            argMap.bridge = bridgeMap['class']
+        }
     }
 
     private static void logUpdatedPropertyWarning(String field, String deprecatedProperty, String updatedProperty) {

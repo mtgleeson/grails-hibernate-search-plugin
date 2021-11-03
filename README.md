@@ -1,13 +1,21 @@
 # Grails Hibernate Search Plugin
 
-This plugin aims to integrate Hibernate Search features to Grails in very few steps.
+This plugin aims to integrate Hibernate Search 6+ features to Grails in very few steps.
+
+It is worth noting that Hibernate Search 6 is a vast improvement over previous versions as they have added and improved the programmatic access in all areas. This plugin is
+aimed to make life easier in linking the Grails domains into the Hibernate Search indexing system, as annotations cannot be applied to the static definitions used in Grails
+domain classes. It also supplies a convenient API class to build HS queries quickly, however once you have indexed your domains using this plugin it is much easier in HS6 to
+open a new SearchSession and compose your own queries thanks to their new DSL.
 
 - [Grails Hibernate Search Plugin](#grails-hibernate-search-plugin)
-  * [Getting started](#getting-started)
-  * [Configuration](#configuration)
-  * [Indexing](#indexing)
-    + [Indexing Domain Class](#mark-your-domain-classes-as-indexable)
-    + [Indexing the Data](#indexing-the-data)
+    * [Getting started](#getting-started)
+    * [Configuration](#configuration)
+    * [Indexing](#indexing)
+        + [Indexing Domain Class](#mark-your-domain-classes-as-indexable)
+        + [Available Mappings](#available-mappings)
+            + [Property Mappings](#property-mappings)
+            + [Field Mappings](#field-mappings)
+        + [Indexing the Data](#indexing-the-data)
   * [Search](#search)
     + [Retrieving search results](#retrieving-the-results)
     + [Mixing with criteria query](#mixing-with-criteria-query)
@@ -24,30 +32,45 @@ This plugin aims to integrate Hibernate Search features to Grails in very few st
   * [Filters](#filters)
     + [Defining Filters](#define-named-filters)
     + [Using Defined Filters](#filter-query-results)
-  * [Options](#options)
-  * [Notes](#notes)
-    + [Updating from 2.2 to 2.3](#updating-from-2.2-to-2.3)
-    + [runtime.groovy vs application.groovy](#runtime.groovy-vs-application.groovy)
-    + [IDE Integration](#ide-integration)
-    + [SessionFactory failures during startup](#sessionfactory-failures-during-startup)
-  * [Examples](#examples)
-  * [Change log](#change-log)
-  * [Authors](#authors)
-  * [Development / Contribution](#development-contribution)
-  * [License](#license)
+    * [Options](#options)
+    * [Migrating from 2.x to 3.x](#migrating-from-v2.x-to-v3.x)
+    * [Notes](#notes)
+        + [Updating from 2.2 to 2.3](#updating-from-2.2-to-2.3)
+        + [runtime.groovy vs application.groovy](#runtime.groovy-vs-application.groovy)
+        + [IDE Integration](#ide-integration)
+        + [SessionFactory failures during startup](#sessionfactory-failures-during-startup)
+    * [Examples](#examples)
+    * [Change log](#change-log)
+    * [Authors](#authors)
+    * [Development / Contribution](#development-contribution)
+    * [License](#license)
 
 ## Getting started
 
 If you don't want to start from the [template project](#examples), you could start a fresh project:
 
+**Note** HS6 has provided a much cleaner disconnect between Hibernate Search and the actual "backend" which does the indexing. This plugin only requires the core components,
+your application will have to add the dependency for the backend type which you want to use Currently the options are:
+
+* [Lucene](https://lucene.apache.org/) : `org.hibernate.search:hibernate-search-backend-lucene:6.0.8.OXBRC`
+* [Elasticsearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.10) : `org.hibernate.search:hibernate-search-backend-elasticsearch:6.0.8.OXBRC`
+
 And add the following to your dependencies
+
 ```
-  compile("org.grails.plugins:hibernate-search:2.3.0")
-  compile("org.grails.plugins:hibernate5:6.1.8")
+  compile("org.hibernate.search:hibernate-search-mapper-orm:6.0.8.OXBRC")
+  compile("org.grails.plugins:hibernate5:7.0.4")
   compile("org.grails.plugins:cache")
-  compile("org.hibernate:hibernate-core:5.2.10.Final")
-  compile("org.hibernate:hibernate-ehcache:5.2.10.Final")
+  compile("org.hibernate:hibernate-core:5.4.18.Final")
+  compile("org.hibernate:hibernate-ehcache:5.4.18.Final")
+  // dont forget your choice of backend
 ```
+
+Please note the following
+
+* Version 3.x of this plugin requires Hibernate Search 6.0.8+ as there is a bug inside previous versions which will not let Hibernate Search work with groovy. Currently this
+  version is built and supplied externally as 6.0.8.OXBRC.
+* Hibernate Search 6+ requires Hibernate 5.4.4+ if you are using an older version of Hibernate and cannot upgrade then please use the v2.x version of this plugin
 
 ## Configuration
 
@@ -68,35 +91,29 @@ hibernate:
         region:
             factory_class: org.hibernate.cache.ehcache.SingletonEhCacheRegionFactory
     search:
-        default:
-        	indexBase: '/path/to/your/indexes'
-            indexmanager: near-real-time
-            directory_provider: filesystem
+        backend:
+        	directory: 
+        		root: '/path/to/your/indexes'
 ```
 
-You can also define the path to your indexes with JNDI configuration as following:
+See [Hibernate Search Configuration](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#search-configuration) documentation for all available
+configuration.
 
-```yml
-hibernate:
-    cache:
-        use_second_level_cache: true
-        use_query_cache: true
-        provider_class: net.sf.ehcache.hibernate.EhCacheProvider
-        region:
-            factory_class: org.hibernate.cache.ehcache.SingletonEhCacheRegionFactory
-    search:
-        default:
-            indexBaseJndiName: 'java:comp/env/luceneIndexBase'
-            directory_provider: filesystem
-```
+## Indexing
 
-##  Indexing
+See [Hibernate Search Search Mapping](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#hsearch-mapping-programmaticapi) for full mapping information.
+This plugin defines a closure which performs some of the basic mapping features via simple map calls, however there is the ability to access the full programmatic api for
+index mapping through this closure.
 
 ### Mark your domain classes as indexable
 
-Add a static `lucenceIndexing` closure as following:
+* Indexing in HS6 is inherited so any indexing performed on one domain will be inherited into its sub classes.
+* You can use properties from super class and traits with no additional configuration
+* You can either define the indexing using the plugin's traditional map interface or by defining a closure which will create a PropertyMappingStep and then expect you to code
+  all the required indexing using Hibernate Search's programmatic API. We have supplied a static method for convenience which you can use when using the closure
+  method, `SearchMappingEntityConfig#propertyMapping`, this returns the closure you supply but allows the IDE code completion.
 
-**Note**: You can use properties from super class and traits with no additional configuration (since 2.0.2)
+Add a static `search` closure as following:
 
 ```groovy
 class MyDomainClass {
@@ -109,6 +126,8 @@ class MyDomainClass {
     Status status
     Double price
     Integer someInteger
+    String description
+    MyOtherDomainClass myOtherDomainClass
 
     enum Status {
         DISABLED, PENDING, ENABLED
@@ -118,84 +137,162 @@ class MyDomainClass {
 
   static search = {
     // fields
-        author index: 'yes'
+        author searchable: 'yes'
         body termVector: 'with_positions'
-        publishedDate date: 'day'
-        summary boost: 5.9
-        title index: 'yes', sortable: [name: title_sort, normalizer: LowerCaseFilterFactory]
-        status index: 'yes', sortable: true
+        title searchable: 'yes', sortable: [name: title_sort, normalizer: 'lowerCaseFilter']
+        status searchable: 'yes', sortable: true
         categories indexEmbedded: true
         items indexEmbedded: [depth: 2] // configure the depth indexing
-        price numeric: 2, analyze: false
-        someInteger index: 'yes', bridge: ['class': PaddedIntegerBridge, params: ['padding': 10]]
-
-        // support for classBridge
-        classBridge = ['class': MyClassBridge, params: [myParam: "4"]]
+        price analyze: false
+        someInteger searchable: 'yes', bridge: ['class': PaddedIntegerBridge]
+        description searchable: 'yes', additionalFieldOptionsMapping: {
+         // Act on the PropertyMappingStandardFieldOptionsStep directly using the HS programmatic API
+         // This closure allows you to add additional steps which this plugin has not coded
+        }
+        myOtherDomainClass {
+         // Act on the PropertyMappingStep directly using the HS programmatic API
+         // Using this closure will create a new PropertyMappingStep and expect you to code the full indexing setup for this property
+        }
     }
 
 }
 ```
 
-This static property indicates which fields should be indexed and describes how the field has to be indexed.
+This static property indicates which fields should be indexed and describes how the field has to be indexed, this is done using the
+[SearchMappingEntityConfig](src/main/groovy/grails/plugins/hibernate/search/config/SearchMappingEntityConfig.groovy)
 
-Also, the plugin lets you to mark your domain classes as indexable with the Hibernate Search annotations.
+### Available Mappings
 
-```groovy
-@Indexed
-@ClassBridge(
-     impl = MyClassBridge,
-     params = @Parameter( name="myParam", value="4" ) )
-class MyDomainClass {
+Hibernate Search has
+[clearly defined types](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#mapper-orm-directfieldmapping-annotations)
+of field mapping depending on the property class. This plugin will create a Field mapping based off the definitions, you can control how the GenericField acts by defining your
+own
+[Bridge](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#search-mapping-bridge)
 
-    // when using annotations, id is required to define DocumentId
-    @DocumentId
-    Long id
+* FullTextField: Applied to any String, Character or Enum
+* KeywordField: Applied to any String, Character or Enum if `analyze` is `false`
+* GenericField: Applied to any other type of class
 
-    @Field(index=Index.YES)
-    String author
+#### Property Mappings
 
-    @Field(index=Index.YES)
-    String body
+`binder`
+: Adds a [Property Binder](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#section-field-bridge). This is required where you have defined a
+PropertyBridge and need to bind that PropertyBridge to this property. The value is one of
 
-    @Field
-    @DateBridge(resolution=Resolution.DAY)
-    Date publishedDate
+* A PropertyBinder instance
+* A PropertyBinder class which can be instantiated with no args
+* A Map with the key:value pairs
+    * class: PropertyBinder class
+    * args: The args required to instantiate the class
 
-    @Field(index=Index.YES)
-    String summary
+`indexEmbedded`
+: Indexes the property as [index embedded](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#search-mapping-associated)
+where the value is one of:
 
-    @Field(index=Index.YES)
-    @Field(name="title_sort", normalizer=@Normalizer(impl=LowerCaseFilterFactory))
-    @SortableField(forField="title_sort")
-    String title
+* boolean true to mark as a plain embedded index
+* Map with any of the following key:value pairs
+    * name: String index name for the embedded index
+    * depth: integer depth to embed to
+    * includeEmbeddedObjectId: boolean to include the object id in the index
+    * associationInverseSide: the inverse side of an association which will be needed by HS to map the indexing dependencies. The indexing requirement can be turned off using
+      the indexingDependency mapping. One of the following which defines the property this property associated with, the supplied value/s will be converted to a
+      PojoModelPathValueNode object.
+        * String path to the property
+        * String Iterable of paths to the property
+        * PojoModelPathValueNode
+    * includePaths: String Collection of paths to limit the embedded index to. Without this the index will embed everything from the associated class which has been marked as
+      searchable
 
-    @Field(index=Index.YES)
-    @SortableField
-    Status status
+`indexingDependency`
+: Aids Hibernate Search in mapping domain associations. HS usually uses the Hibernate annotations to do this, however these don't exist inside Grails, therefore expect to have
+to use this mapping entry for any properties you want to index which are mapped to another Grails domain. This is also used to define derived properties and when they should
+be reindexed. This expects a map with the following key:value pairs
 
-    @Field
-    @NumericField( precisionStep = 2)
-    Double price
+* [derivedFrom](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#mapper-orm-reindexing-derivedfrom): One of the following which defines the property
+  this property is derived from. The supplied value/s will be converted to a PojoModelPathValueNode object.
+    * String path to the property
+    * String Iterable of paths to the property
+    * PojoModelPathValueNode
+* [reindexOnUpdate](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#mapper-orm-reindexing-reindexonupdate): String defining when the index should be
+  refreshed. To disable index updating on embedded or derived properties you should set this to `shallow` or `no`.
 
-    @Field(index=Index.YES)
-    @FieldBridge(impl = PaddedIntegerBridge.class, params = @Parameter(name="padding", value="10"))
-    Integer someInteger
+#### Field Mappings
 
-    enum Status {
-        DISABLED, PENDING, ENABLED
-    }
+The plugin provides direct mapped access to most of the HS
+[field attributes](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#mapper-orm-directfieldmapping-annotation-attributes). If you require any attributes
+which have not been mapped then you should make use of the field closure mapping argument `additionalFieldOptionsMapping`. As the Hibernate Search documentation details what
+all these attributes are, we will just list the expected values.
 
-    @IndexedEmbedded
-    Set categories
+`searchable`
+: String of `default`, `yes` or `no`
+Note this is NOT added by default however if it is not added then HS will fall back on the chosen backend default.
 
-    @IndexedEmbedded(depth = 2)
-    Set items
+`projectable`
+: String of `default`, `yes` or `no`
 
-    static hasMany = [categories: Category, items: Item]
+`norms`
+: String of `default`, `yes` or `no`
 
-}
-```
+`bridge`
+:This is used to apply a ValueBridge ONLY to a property, it should be one of the following
+
+* Class which extends ValueBridge
+* Instance of a class which extends ValueBridge
+
+`termVector`
+: Can only be applied to FullTextFields. String of `default`, `yes`, `no`, `with_positions`, `with_offsets`, `with_positions_offsets`, `with_positions_payloads`
+, `with_positions_offsets_payloads`
+
+`analyzer`
+: Can only be applied to FullTextFields. String name of an analyser to be applied. Analyzers are defined inside a bean configurer, see [Analyzers](#analysers).
+
+`normalizer`
+: Can only be applied to KeywordFields String name of a normalizer to be applied. Normalizers are defined inside a bean configurer, see [Normalizers](#normalizers).
+
+`additionalFieldOptionsMapping`
+: Closure which delegates to the PropertyMappingKeywordFieldOptionsStep built by the mapping so far, ideally the closure should be applied last. For convenience inside an IDE
+you can call the static method `SearchMappingEntityConfig#additionalFieldOptionsMapping` which will return the closure you pass to the method, but provides the necessary
+delegation annotations to help an IDE in code completion.
+
+`sortable`
+: Can only be to KeywordFields or GenericFields. Either a boolean `true` or a Map with the following key:value pairs.
+
+* name: Name for the sortable field, if not supplied then the property index name will be used with a suffix `_sort`
+* normalizer: Can only be applied to KeywordFields. String name of a normalizer to be applied. Normalizers are defined inside a bean configurer,
+  see [Normalizers](#normalizers).
+
+Also, the plugin lets you to mark your domain classes as indexable with the Hibernate Search annotations,
+see [Hibernate Search Search Mapping](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#search-mapping)
+
 ### Indexing the data
+
+By default Hibernate Search indexes are linked to the basic CRUD actions performed by Hibernate. Therefore you shouldn't need to manually index your domains as this will be
+done automatically. However for convenience the plugin provides simple accessor methods into the HS indexing system.
+
+Please see [Hibernate Search Indexing](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#mapper-orm-indexing) for information on the underlying system.
+
+#### Rebuild index on start
+
+Hibernate Search offers an option to rebuild the whole index using the MassIndexer API. This plugin provides a configuration which lets you to rebuild automatically your
+indexes on startup.
+
+To use the default options of the MassIndexer API, simply provide this option into your application.yml:
+
+```yml
+grails.plugins.hibernatesearch.rebuildIndexOnStart: true
+```
+
+If you need to tune the MassIndexer API, you could specify options with a map as following:
+
+```yml
+grails.plugins.hibernatesearch:
+    rebuildIndexOnStart:
+		batchSizeToLoadObjects: 30
+		threadsForSubsequentFetching: 8 	
+		threadsToLoadObjects: 4
+		threadsForIndexWriter: 3
+		cacheMode: NORMAL
+```
 
 #### Create index for existing data
 
@@ -208,7 +305,6 @@ MyDomainClass.search().createIndexAndWait()
 This method relies on MassIndexer and can be configured like this:
 
 ```groovy
-
 MyDomainClass.search().createIndexAndWait {
    ...
    batchSizeToLoadObjects 25
@@ -216,13 +312,13 @@ MyDomainClass.search().createIndexAndWait {
    threadsToLoadObjects 5
    ...
 }
+```
 
 #### Manual index changes
 
 ##### Adding instances to index
 
 ```groovy
-
 // index only updated at commit time
 MyDomainClass.search().withTransaction { transaction ->
    MyDomainClass.findAll().each {
@@ -234,76 +330,40 @@ MyDomainClass.search().withTransaction { transaction ->
 #### Deleting instances from index
 
 ```groovy
-
 // index only updated at commit time
 MyDomainClass.search().withTransaction { transaction ->
-
    MyDomainClass.get(3).search().purge()
-
 }
 ```
 
 To remove all entities of a given type, you could use the following purgeAll method:
 
 ```groovy
-
 // index only updated at commit time
 MyDomainClass.search().withTransaction {
-   MyDomainClass.search().purgeAll()
+    MyDomainClass.search().purgeAll()
 }
 ```
-
-
-#### Rebuild index on start
-
-Hibernate Search offers an option to rebuild the whole index using the MassIndexer API. This plugin provides a configuration which lets you to rebuild automatically your indexes on startup.
-
-To use the default options of the MassIndexer API, simply provide this option into your runtime.groovy:
-
-```groovy
-
-
-grails.plugins.hibernatesearch = {
-    rebuildIndexOnStart true
-}
-
-```
-
-If you need to tune the MassIndexer API, you could specify options with a closure as following:
-
-```groovy
-
-grails.plugins.hibernatesearch = {
-
-    rebuildIndexOnStart {
-		batchSizeToLoadObjects 30
-		threadsForSubsequentFetching 8 	
-		threadsToLoadObjects 4
-		threadsForIndexWriter 3
-		cacheMode CacheMode.NORMAL
-    }
-
-}
-
-```
-
 
 ## Search
 
-The plugin provides you dynamic method to search for indexed entities.
+The plugin provides you a dynamic method to search for indexed entities. This is done through
+the [HibernateSearchApi](/src/main/groovy/grails/plugins/hibernate/search/HibernateSearchApi.groovy) class which opens a new Hibernate Search `SearchSession` for the domain
+and then applies the closure to this object.
+
+You can however open your own SearchSession at any time and query Hibernate Search using their
+[query DSL](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#search-query-querydsl).
 
 ### Retrieving the results
 
-All indexed domain classes provides .search() method which lets you to list the results.
-The plugin provides a search DSL for simplifying the way you can search. Here is what it looks like with the search DSL:
-(See the HibernateSearchQueryBuilder class to check the available methods)
+All indexed domain classes provides ``.search()` method which lets you to list the results.
 
 ```groovy
 class SomeController {
 
-   def myAction = { MyCommand command ->
+    def myAction = {MyCommand command ->
 
-      def page = [max: Math.min(params.max ? params.int('max') : 10, 50), offset: params.offset ? params.int('offset') : 0]
+        def page = [max: Math.min(params.max ? params.int('max') : 10, 50), offset: params.offset ? params.int('offset') : 0]
 
       def myDomainClasses = MyDomainClass.search().list {
 
@@ -346,25 +406,10 @@ class SomeController {
 }
 ```
 
-### Mixing with criteria query
-
-Criteria criteria = fullTextSession.createCriteria( clazz ).createAlias("session", "session").add(Restrictions.eq("session.id", 115L));
-
-```groovy
-  def myDomainClasses = MyDomainClass.search().list {
-
-    criteria {
-       setFetchMode("authors", FetchMode.JOIN)
-    }
-
-    fuzzy "description", "mi search"
-  }
-```
-
 ### Performing SimpleQueryString searches
 
-See [Hibernate Search Simple Query Strings](https://docs.jboss.org/hibernate/stable/search/reference/en-US/html_single/#_simple_query_string_queries) for more details on the actual query string.
-You can implement any other queries alongside a simple query string search.
+See [Hibernate Search Simple Query Strings](https://docs.jboss.org/hibernate/search/6.0/reference/en-US/html_single/#search-dsl-predicate-simple-query-string)
+for more details on the actual query string. You can implement any other queries alongside a simple query string search.
 
 #### Simple search on 1 field
 ```groovy
@@ -400,7 +445,7 @@ def myDomainClasses = MyDomainClass.search().list {
 
 ### Sorting the results
 
-sort() method accepts an optional second parameter to specify the sort order: "asc"/"desc". Default is "asc".
+`sort()` method accepts an optional second parameter to specify the sort order: "asc"/"desc". Default is "asc".
 
 Fields used for sorting can be analyzed, but must not be tokenized, so you should rather use normalizers on those fields.
 
@@ -740,31 +785,68 @@ grails.plugins.hibernatesearch = {
 }
 ```
 
+## Migrating from v2.x to v3.x
+
+There is a significant change between Hibernate Search 5 and Hibernate Search 6. To start with HS6 has a much more powerful and friendly programmatic API and query DSL, they
+have also separated the "backend" out from the core search engine. This is advantageous as it means you are no longer tied to Lucene when searching, all you need to do now is
+apply your chosen backend dependency and it wires into the Hibernate Search engine, this will allow you to swop between Lucene or Elasticsearch with ease.
+
+However they have also moved a lot of configuration around, and also deprecated or renamed a lot of the methods. Every effort has been made to handle migration automatically
+for you however there are some properties or configurations which no longer have a direct comparison. Log warnings have been applied to every location where possible, prefixed
+with `DEPRECATED`, that either something has been moved or removed. Where something has been moved or renamed we have done the migration where possible for you, you will still
+receive the warnings until you update your code but it will work. Where options are no longer allowed we still warn and ignore your settings.
+
+To start we would recommend applying the following dependency, this will bring in the Lucene backend along with some implementing classes which warn that methods are
+deprecated. This will help if you have any custom written code, or custom ClassBridges as it will allow the code to compile with deprecation warnings.
+
+```groovy
+compile "org.hibernate.search:hibernate-search-v5migrationhelper-orm:6.0.8.OXBRC"
+```
+
+You will want to choose the backend you wish to use, if you used this plugin before with no additional changes then you will want the Lucene backend, but you may wish to take
+this opportunity to swop to Elasticsearch. Whatever your choice you will need to apply one of the below dependencies, as we do not apply either in our build.
+
+* [Lucene](https://lucene.apache.org/) : `org.hibernate.search:hibernate-search-backend-lucene:6.0.8.OXBRC`
+* [Elasticsearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.10) : `org.hibernate.search:hibernate-search-backend-elasticsearch:6.0.8.OXBRC`
+
+We would also recommend reading the Hibernate Search [Migration Guide](https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#_introduction)
+especially the section around [configuration changes](https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#configuration), here they list all the configuration
+keys which have been moved and where they've been moved to.
+
+The following sections document any changes required to fix the deprecation warnings.
+
+### Mapping
+
+The following property attributes have been removed from HS6
+
+* containedIn
+* numeric
+* boost
+* date
+
+The following property attributes have been renamed or functionally changed
+
+`index`
+: Renamed to `searchable`, the possible values remain the same
+
+`store`
+: Rename to `projectable`, the possible values remain the same
+
+`bridge`
+: This now expects a Class which extends ValueBridge. The Bridging API has changed a lot, see [bridges](#bridges) for how to do this in Grails
+and [migrating bridges](https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#bridges) for further information with respect to HS6.
+
+`analyzer`
+: This now expects a string naming a defined analyzer. See [analyzers](#analyzers) for how to do this in the plugin and
+[migrating analzyers](https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#analyzer) for further information with respect to HS6.
+
+`normalizer`
+: This now expects a string naming a defined normalizer. See [normalizers](#normalizers) for how to do this in the plugin and
+[migrating normalizers](https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#normalizer) for further information with respect to HS6.
+
+### Searching
+
 ## Notes
-
-### Updating from 2.2 to 2.3
-
-There is a signification change between 2.2 and 2.3.
-
-#### Updating filters
-
-Filters must now be defined in the runtime.groovy in advance and then added to a query as filter definitions which will define fullTextFilters.
-This is due to the deprecation of the filter class from Hibernate Search.
-
-### runtime.groovy vs application.groovy
-
-In Grails 3 the `application.groovy` file is loaded when the Grails CLI is started,
-therefore certain logic and requirements on dependencies will fall over when defined in the `application.groovy` file.
-
-The solution is to define a `runtime.groovy` file and move the logic into this file,
-this also helps to provide a nice divide on what logic is required when running the application
-and as config is now provided in the `application.yml` file it should result in only needing to define a `runtime.groovy` file and not the
-`application.groovy` file.
-
-We therefore advise all hibernatesearch closure config to be defined in the `runtime.groovy` file.
-
-`runtime.groovy` is run along with application.groovy when the application starts up, it is also packaged and run by a WAR.
-
 
 ### IDE Integration
 
@@ -863,8 +945,8 @@ public class HibernateSearchSessionFactoryObserver implements SessionFactoryObse
 Therefore if you get the above exceptions then drop a debug point at line 130 and then start with a debugger running. 
 The debug point will give you the helpful exception as to why the boot has failed.
 
-
 ## Examples
+
 A sample project is available at this repository URL
 https://github.com/lgrignon/grails3-quick-start
 
@@ -872,7 +954,15 @@ It contains several branches for each version of this plugin
 
 ## Change log
 
+### v3.0
+
+* Grails 4.0.x
+* GORM 7.0.4
+* Hibernate 5.4.4
+* Hibernate Search 6.0.8
+
 ### v2.3
+
 * Grails 3.3.x
 * GORM 6.1
 * Hibernate 5.2.10
