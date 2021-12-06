@@ -165,7 +165,7 @@ if (project.hasProperty('hibernateSearchMavenUser') && project.hasProperty('hibe
 					username "$hibernateSearchMavenUser"
 					password "$hibernateSearchMavenPassword"
 				}
-				url "$hibernateSearchMavenRepoUrl/libs-release-local"
+				url project.version.endsWith('SNAPSHOT') ? "$hibernateSearchMavenRepoUrl/libs-snapshot-local" : "$hibernateSearchMavenRepoUrl/libs-release-local"
 			}
 		}
 
