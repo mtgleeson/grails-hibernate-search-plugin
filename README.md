@@ -52,24 +52,24 @@ If you don't want to start from the [template project](#examples), you could sta
 **Note** HS6 has provided a much cleaner disconnect between Hibernate Search and the actual "backend" which does the indexing. This plugin only requires the core components,
 your application will have to add the dependency for the backend type which you want to use Currently the options are:
 
-* [Lucene](https://lucene.apache.org/) : `org.hibernate.search:hibernate-search-backend-lucene:6.0.8.OXBRC`
-* [Elasticsearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.10) : `org.hibernate.search:hibernate-search-backend-elasticsearch:6.0.8.OXBRC`
+* [Lucene](https://lucene.apache.org/) : `org.hibernate.search:hibernate-search-backend-lucene:6.1.0.Beta1`
+* [Elasticsearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.10) : `org.hibernate.search:hibernate-search-backend-elasticsearch:6.1.0.Beta1`
 
 And add the following to your dependencies
 
 ```
-  compile("org.hibernate.search:hibernate-search-mapper-orm:6.0.8.OXBRC")
-  compile("org.grails.plugins:hibernate5:7.0.4")
+  compile("org.hibernate.search:hibernate-search-mapper-orm:6.1.0.Beta1")
+  compile("org.grails.plugins:hibernate5:7.2.0")
   compile("org.grails.plugins:cache")
-  compile("org.hibernate:hibernate-core:5.4.18.Final")
-  compile("org.hibernate:hibernate-ehcache:5.4.18.Final")
+  compile("org.hibernate:hibernate-core:5.6.3.Final")
+  compile("org.hibernate:hibernate-ehcache:5.6.3.Final")
   // dont forget your choice of backend
 ```
 
 Please note the following
 
 * Version 3.x of this plugin requires Hibernate Search 6.0.8+ as there is a bug inside previous versions which will not let Hibernate Search work with groovy. Currently this
-  version is built and supplied externally as 6.0.8.OXBRC.
+  version is built and supplied externally as 6.1.0.Beta1.
 * Hibernate Search 6+ requires Hibernate 5.4.4+ if you are using an older version of Hibernate and cannot upgrade then please use the v2.x version of this plugin
 
 ## Configuration
@@ -125,6 +125,7 @@ class MyDomainClass {
     String title
     Status status
     Double price
+    BigDecimal tax
     Integer someInteger
     String description
     MyOtherDomainClass myOtherDomainClass
@@ -137,6 +138,7 @@ class MyDomainClass {
 
   static search = {
     // fields
+    	id searchable: 'yes', projectable: 'yes'
         author searchable: 'yes'
         body termVector: 'with_positions'
         title searchable: 'yes', sortable: [name: title_sort, normalizer: 'lowerCaseFilter']
@@ -144,6 +146,7 @@ class MyDomainClass {
         categories indexEmbedded: true
         items indexEmbedded: [depth: 2] // configure the depth indexing
         price analyze: false
+	tax searchable: 'yes', decimalScale: 2
         someInteger searchable: 'yes', bridge: ['class': PaddedIntegerBridge]
         description searchable: 'yes', additionalFieldOptionsMapping: {
          // Act on the PropertyMappingStandardFieldOptionsStep directly using the HS programmatic API
@@ -171,6 +174,7 @@ own
 
 * FullTextField: Applied to any String, Character or Enum
 * KeywordField: Applied to any String, Character or Enum if `analyze` is `false`
+* ScaledNumberField: Applied to BigDecimal and BigInteger when declaring a decimalScale
 * GenericField: Applied to any other type of class
 
 #### Property Mappings
@@ -571,6 +575,8 @@ class MyDomainClass {
 }
 ```
 
+Note: If the projected field is a multi-valued field the value will be returned as a List instead of a String.
+
 ## Analysis
 
 ### Define named analyzers
@@ -698,6 +704,26 @@ This configuration is strictly equivalent to this annotation configuration:
 public class Address {
 ...
 }
+```
+
+Another way to define a normalizer when using Lucene as the backend is to create a class implementing LuceneAnalysisConfigurer and progrmatically create the normalizer.
+
+```groovy
+package com.example.lucene
+
+class MyLuceneAnalysisConfigurer implements LuceneAnalysisConfigurer {
+
+    @Override
+    void configure(LuceneAnalysisConfigurationContext context) {
+        context.normalizer( "lowercase" ).custom()
+                .tokenFilter( LowerCaseFilterFactory.class )
+                .tokenFilter( ASCIIFoldingFilterFactory.class );
+    }
+}
+```
+and in application.groovy (or application.yml):
+```yml
+hibernate.search.backend.analysis.configurer = 'class:com.example.lucene.MyLuceneAnalysisConfigurer'
 ```
 
 ### Use named normalizer
