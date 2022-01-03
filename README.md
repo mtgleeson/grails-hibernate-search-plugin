@@ -826,14 +826,14 @@ To start we would recommend applying the following dependency, this will bring i
 deprecated. This will help if you have any custom written code, or custom ClassBridges as it will allow the code to compile with deprecation warnings.
 
 ```groovy
-compile "org.hibernate.search:hibernate-search-v5migrationhelper-orm:6.0.8.OXBRC"
+compile "org.hibernate.search:hibernate-search-v5migrationhelper-orm:6.1.0.Beta1"
 ```
 
 You will want to choose the backend you wish to use, if you used this plugin before with no additional changes then you will want the Lucene backend, but you may wish to take
 this opportunity to swop to Elasticsearch. Whatever your choice you will need to apply one of the below dependencies, as we do not apply either in our build.
 
-* [Lucene](https://lucene.apache.org/) : `org.hibernate.search:hibernate-search-backend-lucene:6.0.8.OXBRC`
-* [Elasticsearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.10) : `org.hibernate.search:hibernate-search-backend-elasticsearch:6.0.8.OXBRC`
+* [Lucene](https://lucene.apache.org/) : `org.hibernate.search:hibernate-search-backend-lucene:6.1.0.Beta1`
+* [Elasticsearch](https://www.elastic.co/guide/en/elasticsearch/reference/7.10) : `org.hibernate.search:hibernate-search-backend-elasticsearch:6.1.0.Beta1`
 
 We would also recommend reading the Hibernate Search [Migration Guide](https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#_introduction)
 especially the section around [configuration changes](https://docs.jboss.org/hibernate/search/6.0/migration/html_single/#configuration), here they list all the configuration
