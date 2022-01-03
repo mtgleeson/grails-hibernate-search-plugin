@@ -31,6 +31,7 @@ import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.Property
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingIndexedEmbeddedStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingKeywordFieldOptionsStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingNonFullTextFieldOptionsStep
+import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingScaledNumberFieldOptionsStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingStandardFieldOptionsStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.PropertyMappingStep
 import org.hibernate.search.mapper.pojo.mapping.definition.programmatic.impl.TypeMappingStepImpl
@@ -60,6 +61,7 @@ class SearchMappingEntityConfig {
     private final List<String> parentIndexedFields
     private final PojoRawTypeModel entityModel
     private final ProgrammaticMappingConfigurationContext mapping
+    private final PropertyMappingStep identityPropertyMappingStep
 
     static Closure propertyMapping(@DelegatesTo(value = PropertyMappingStep, strategy = Closure.DELEGATE_ONLY) closure) {
         closure
@@ -83,10 +85,10 @@ class SearchMappingEntityConfig {
 
         PLUGIN_LOGGER.info '* {} is indexed', domainClass.name
         typeMappingStep.indexed()
-        // If there are any parent indexed fields then the entity is already marked as indexed as it is a subclass and we dont need to add the id fieldw
+        // If there are any parent indexed fields then the entity is already marked as indexed as it is a subclass and we dont need to add the id field
         if (!domainClass.isAbstract() && !parentIndexedFields) {
             // Add id property
-            typeMappingStep.property(IDENTITY).keywordField().documentId()
+            identityPropertyMappingStep = typeMappingStep.property(IDENTITY).documentId()
         }
     }
 
@@ -118,8 +120,13 @@ class SearchMappingEntityConfig {
         String propertyName = propertyModel.name()
         log.debug 'Property [{}] found with name [{}] to be indexed', propertyName, name
         indexedPropertyNames.add(name)
+        PropertyMappingStep propertyMappingStep
 
-        PropertyMappingStep propertyMappingStep = typeMappingStep.property(name)
+        if (name == IDENTITY){
+            propertyMappingStep = identityPropertyMappingStep
+        } else {
+            propertyMappingStep = typeMappingStep.property(name)
+        }
 
         // Issue exists when the backingfield is inside a trait as the property name is then long format and wont match up
         // Unable to resolve path 'xxxx__yyyy' to a persisted attribute in Hibernate ORM metadata
@@ -255,6 +262,9 @@ class SearchMappingEntityConfig {
                 log.debug('  Creating fullTextField index [{}]', fieldName)
                 fieldOptionsStep = propertyMappingStep.fullTextField(fieldName)
             }
+        } else if (args.containsKey('decimalScale') && fieldClass in [BigDecimal, BigInteger]) {
+            log.debug('  Creating scaledNumberField index [{}]', fieldName)
+            fieldOptionsStep = propertyMappingStep.scaledNumberField(fieldName)
         } else {
             log.debug('  Creating genericField index [{}]', fieldName)
             fieldOptionsStep = propertyMappingStep.genericField(fieldName)
@@ -315,7 +325,12 @@ class SearchMappingEntityConfig {
                 }
             }
         }
-
+        if (fieldOptionsStep instanceof PropertyMappingScaledNumberFieldOptionsStep) {
+            if (args.decimalScale){
+                log.debug('  Setting decimal scale [{}] for scaled number field', args.get('decimalScale'))
+                fieldOptionsStep.decimalScale(args.remove('decimalScale') as int)
+            }
+        }
         if (args.additionalFieldOptionsMapping) {
             Closure additionalFieldOptionsMapping = args.remove('additionalFieldOptionsMapping')
             applyAdditionalFieldOptionsMapping(fieldOptionsStep, additionalFieldOptionsMapping)
@@ -337,6 +352,8 @@ class SearchMappingEntityConfig {
         log.debug('  Adding sortable field [{}]', sortableFieldName)
         if (fieldOptionsStep instanceof PropertyMappingKeywordFieldOptionsStep) {
             sortableField = mapArgs.name ? propertyMappingStep.keywordField(sortableFieldName) : fieldOptionsStep
+        } else if (fieldOptionsStep instanceof PropertyMappingScaledNumberFieldOptionsStep) {
+            sortableField = mapArgs.name ? propertyMappingStep.scaledNumberField(sortableFieldName) : fieldOptionsStep
         } else if (fieldOptionsStep instanceof PropertyMappingGenericFieldOptionsStep) {
             sortableField = mapArgs.name ? propertyMappingStep.genericField(sortableFieldName) : fieldOptionsStep
         } else {

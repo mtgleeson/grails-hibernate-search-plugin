@@ -32,9 +32,11 @@ import grails.plugins.hibernate.search.filter.FilterFactory
 import groovy.util.logging.Slf4j
 import org.hibernate.SessionFactory
 import org.hibernate.Transaction
+import org.hibernate.search.engine.backend.metamodel.IndexFieldDescriptor
 import org.hibernate.search.engine.search.predicate.SearchPredicate
 import org.hibernate.search.engine.search.predicate.dsl.BooleanPredicateClausesStep
 import org.hibernate.search.engine.search.predicate.dsl.SearchPredicateFactory
+import org.hibernate.search.engine.search.projection.dsl.FieldProjectionOptionsStep
 import org.hibernate.search.engine.search.projection.dsl.FieldProjectionValueStep
 import org.hibernate.search.engine.search.projection.dsl.ProjectionFinalStep
 import org.hibernate.search.engine.search.projection.dsl.SearchProjectionFactory
@@ -377,15 +379,41 @@ class HibernateSearchApi {
             ProjectionFinalStep projectionFinalStep
 
             if (projections.size() == 1) {
-                projectionFinalStep = projectionFactory.field(projections.first())
+                FieldProjectionValueStep fieldProjectionValueStep = projectionFactory.field(projections.first())
+                projectionFinalStep = checkAddMultiForProjectionField(projections.first(), fieldProjectionValueStep)
             } else {
-                FieldProjectionValueStep[] fields = projections.collect {projectionFactory.field(it)}.toArray() as FieldProjectionValueStep[]
+                FieldProjectionOptionsStep[] fields = projections.collect {
+                    return checkAddMultiForProjectionField(it, projectionFactory.field(it))
+                }.toArray() as FieldProjectionOptionsStep[]
                 projectionFinalStep = projectionFactory.composite(fields)
             }
             whereStep = whereStep.select(projectionFinalStep.toProjection())
         }
 
         whereStep.where(searchPredicate)
+    }
+
+    /**
+     * Check if the field used in for a projection should be marked multi value. This is based on the field in the index
+     * and if it can be multi valued in the root document.
+     * If so, set the projection field as multi.
+     *
+     * @param fieldPath
+     * @param fieldProjectionValueStep
+     */
+    private FieldProjectionOptionsStep checkAddMultiForProjectionField(String fieldPath, FieldProjectionValueStep fieldProjectionValueStep){
+        IndexFieldDescriptor indexFieldDescriptor = getIndexFieldDescriptor(fieldPath)
+
+        if (indexFieldDescriptor.multiValuedInRoot()){
+            log.info("Setting multi valued projection for field path {}", fieldPath)
+            return fieldProjectionValueStep.multi()
+        }
+
+        return fieldProjectionValueStep
+    }
+
+    private IndexFieldDescriptor getIndexFieldDescriptor(String fieldName){
+        return searchScope.includedTypes()[0].indexManager().descriptor().field(fieldName).get();
     }
 
     private initSearch() {

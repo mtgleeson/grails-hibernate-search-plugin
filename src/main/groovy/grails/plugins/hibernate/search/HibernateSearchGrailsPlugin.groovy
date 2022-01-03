@@ -47,7 +47,6 @@ class HibernateSearchGrailsPlugin extends Plugin {
 
     Closure doWithSpring() {
         {->
-            hibernateSearchMappingConfigurer(GrailsHibernateSearchMappingConfigurer)
         }
     }
 

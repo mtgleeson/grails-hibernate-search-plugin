@@ -1,4 +1,4 @@
 hibernate:
     search:
         mapping:
-            configurer: 'bean:hibernateSearchMappingConfigurer'
+            configurer: 'class:grails.plugins.hibernate.search.mapper.orm.mapping.GrailsHibernateSearchMappingConfigurer'
